@@ -1,0 +1,35 @@
+{
+  "name": "dsh-scp-ops",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "SCP upload/download tools for DSH — legacy SCP wire protocol over ssh2, works without a remote SFTP subsystem.",
+  "license": "MIT",
+  "author": "ciskonc",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ciskonc/dsh-scp-ops.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ciskonc/dsh-scp-ops/issues"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md",
+    "CHANGELOG.md",
+    "README_EN.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

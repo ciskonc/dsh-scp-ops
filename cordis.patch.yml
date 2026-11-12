@@ -1,0 +1,7 @@
+# dsh-scp-ops bundle patch: registers the SCP transfer plugin entry.
+# Auth profiles are configured here; they survive harness upgrades because the
+# user patch layer is authoritative.
+- insert:
+    - id: scp-ops
+      name: 'dsh-scp-ops'
+      config: {}

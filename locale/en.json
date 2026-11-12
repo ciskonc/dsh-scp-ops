@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "SCP Ops",
+    "description": "Upload/download files over the legacy SCP protocol — no remote SFTP subsystem needed."
+  }
+}

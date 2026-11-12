@@ -1,0 +1,37 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  smoke:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: [20, 22, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Syntax check
+        run: node --check index.js
+      - name: Import smoke (ssh2 is a lazy dependency — module import must not require it)
+        run: node --input-type=module -e "await import('./index.js'); console.log('import ok')"
+      - name: Manifest and resource checks
+        shell: bash
+        run: |
+          node -e "const j=require('./package.json'); if(!j.dsh||!j.dsh.bundle||!j.dsh.bundle.patch) process.exit(1)"
+          node -e "const j=require('./package.json'); for (const f of ['index.js','cordis.patch.yml','locale/*.json','icon.svg','README.md','README_EN.md','CHANGELOG.md']) { if (!j.files.includes(f)) { console.error('files missing:', f); process.exit(1); } }"
+          node -e "for (const f of ['locale/en.json','locale/zh.json']) { const j=JSON.parse(require('fs').readFileSync(f,'utf8')); if(!j.meta||!j.meta.title||!j.meta.description) process.exit(1); }"
+          node -e "const fs=require('fs'); const s=fs.readFileSync('icon.svg','utf8'); if(!s.startsWith('<svg')||s.length>256*1024) process.exit(1);"
+          node -e "const t=require('fs').readFileSync('cordis.patch.yml','utf8'); if(!/- insert:/.test(t)||!/name: 'dsh-scp-ops'/.test(t)) process.exit(1);"
+      - name: Changelog version match
+        shell: bash
+        run: |
+          V=$(node -e "console.log(require('./package.json').version)")
+          grep -q "## $V" CHANGELOG.md || { echo "CHANGELOG.md lacks a '## $V' section"; exit 1; }
