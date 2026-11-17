@@ -21,13 +21,15 @@
  * - Transfers are serialized per target host (config.max_concurrent_per_host).
  *
  * Upgrade stability: imports nothing from harness packages; only node builtins
- * plus the `ssh2` package expected to be hoisted in the profile's node_modules
- * (installed alongside dsh-ssh-ops).
+ * plus the `ssh2` package (installed alongside dsh-ssh-ops), resolved via a
+ * three-step chain anchored at this file's own location — no hard-coded
+ * install directory names.
  */
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import fsCb from 'node:fs';
 import { promises as fs } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 const ZERO = '\0';
 const MAX_WIRE_BUFFER = 64 * 1024 * 1024;  // hard cap on unconsumed inbound data
@@ -41,25 +43,29 @@ let ssh2LoadPromise; // shared in-flight import; resolves to module or null
 function loadSsh2() {
   if (!ssh2LoadPromise) {
     ssh2LoadPromise = (async () => {
+      const clientOf = (mod) => mod?.Client ?? mod?.default?.Client;
+      // 1) Plain ESM import along this module's own resolution chain.
       try {
         const mod = await import('ssh2');
-        const Client = mod?.Client ?? mod?.default?.Client;
-        return typeof Client === 'function' ? mod : null;
-      } catch {
-        // The bundle is linked into the profile by pnpm, so the plain import
-        // resolves from the workspace realpath where ssh2 is not an ancestor.
-        // Fall back to the profile's hoisted node_modules via DSH_PROFILE_DIR.
-        const profileDir = process.env.DSH_PROFILE_DIR;
-        if (!profileDir) return null;
+        if (typeof clientOf(mod) === 'function') return mod;
+      } catch {}
+      // 2) Resolve from THIS FILE's real location (import.meta.url): survives
+      //    symlinked, renamed or relocated installs — no hard-coded dir name.
+      try {
+        const here = path.dirname(fileURLToPath(import.meta.url));
+        const mod = createRequire(path.join(here, 'index.js'))('ssh2');
+        if (typeof clientOf(mod) === 'function') return { default: mod };
+      } catch {}
+      // 3) Last resort: the profile's hoisted node_modules via DSH_PROFILE_DIR.
+      //    package.json is a stable resolution anchor — no bundle dir name assumed.
+      const profileDir = process.env.DSH_PROFILE_DIR;
+      if (profileDir) {
         try {
-          const requireFromProfile = createRequire(path.join(profileDir, 'node_modules', 'dsh-scp-ops', 'index.js'));
-          const mod = requireFromProfile('ssh2');
-          const Client = mod?.Client ?? mod?.default?.Client;
-          return typeof Client === 'function' ? { default: mod } : null;
-        } catch {
-          return null;
-        }
+          const mod = createRequire(path.join(profileDir, 'package.json'))('ssh2');
+          if (typeof clientOf(mod) === 'function') return { default: mod };
+        } catch {}
       }
+      return null;
     })();
   }
   return ssh2LoadPromise;

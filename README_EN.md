@@ -2,7 +2,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/version-0.2.0-blue?style=flat-square)](https://github.com/ciskonc/dsh-scp-ops/releases)
+[![Version](https://img.shields.io/badge/version-0.2.1-blue?style=flat-square)](https://github.com/ciskonc/dsh-scp-ops/releases)
 [![License](https://img.shields.io/badge/license-MIT-orange?style=flat-square)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-DeepSeek%20Harness-green?style=flat-square)](https://github.com/ciskonc/dsh-scp-ops)
 

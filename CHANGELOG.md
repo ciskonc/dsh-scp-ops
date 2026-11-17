@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.1 — 2026-11-17
+
+- **Fixed**: ssh2 resolution no longer assumes the bundle's installed directory
+  name. `loadSsh2()` now tries three anchors in order — the module's own ESM
+  resolution chain, this file's real location via `import.meta.url` (survives
+  symlinked, renamed or relocated installs), and `DSH_PROFILE_DIR` anchored at
+  `package.json` — instead of the old hard-coded
+  `node_modules/dsh-scp-ops/index.js` fallback path.
+- **Changed**: package prepared for its first npm publication (`private`
+  flag removed); profile-installed bundles remain unaffected.
+
 ## 0.2.0 — 2026-11-12
 
 Security & robustness release after a 7-perspective adversarial code review

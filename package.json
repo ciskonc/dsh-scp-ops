@@ -1,7 +1,7 @@
 {
   "name": "dsh-scp-ops",
-  "version": "0.2.0",
-  "private": true,
+  "version": "0.2.1",
+  "private": false,
   "type": "module",
   "description": "SCP upload/download tools for DSH — legacy SCP wire protocol over ssh2, works without a remote SFTP subsystem.",
   "license": "MIT",
