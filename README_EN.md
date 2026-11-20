@@ -1,145 +1,161 @@
-# dsh-scp-ops
-
 <div align="center">
 
-[![Version](https://img.shields.io/badge/version-0.2.3-blue?style=flat-square)](https://github.com/ciskonc/dsh-scp-ops/releases)
-[![License](https://img.shields.io/badge/license-MIT-orange?style=flat-square)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-DeepSeek%20Harness-green?style=flat-square)](https://github.com/ciskonc/dsh-scp-ops)
+# dsh-scp-ops
 
-[中文](README.md) · [English](README_EN.md) · [Changelog](CHANGELOG.md)
+**An SCP upload/download plugin for DeepSeek Harness that implements the SCP wire protocol on exec channels, with no SFTP subsystem required.**
+
+scp_upload and scp_download cover single files, recursive directories and glob batches; named profiles target legacy devices without an SFTP subsystem.
+
+<p align="center">
+  <a href="LICENSE"><img alt="GitHub license" src="https://img.shields.io/github/license/ciskonc/dsh-scp-ops"></a>
+  <a href="https://github.com/ciskonc/dsh-scp-ops"><img alt="GitHub last commit" src="https://img.shields.io/github/last-commit/ciskonc/dsh-scp-ops"></a>
+  <a href="https://github.com/ciskonc/dsh-scp-ops/issues"><img alt="GitHub issues" src="https://img.shields.io/github/issues/ciskonc/dsh-scp-ops"></a>
+  <a href="https://github.com/ciskonc/dsh-scp-ops/graphs/contributors"><img alt="GitHub contributors" src="https://img.shields.io/github/contributors/ciskonc/dsh-scp-ops"></a>
+</p>
+
+English | [中文](README.md)
 
 </div>
 
-## Overview
+---
 
-SCP upload/download plugin for DeepSeek Harness. Implements the SCP protocol (`scp -t` / `scp -f`) on top of an ssh2 exec channel — the remote side only needs an `scp` executable, no SFTP subsystem. Companion plugin to `dsh-ssh-ops`, filling in its SCP transfer capability.
+## Introduction
 
-## Features
+dsh-scp-ops is a DeepSeek Harness plugin for SCP upload and download, the companion plugin of dsh-ssh-ops. It implements the SCP wire protocol (scp -t / scp -f) over the ssh2 exec channel, so any remote host with an scp executable works, with no SFTP subsystem required.
 
-| Feature | Description |
-|---------|-------------|
-| Three transfer modes | exact single file / recursive directory tree / remote glob batch (`/logs/*.log`), `literal: true` for exact-name downloads |
-| No SFTP required | speaks the SCP wire protocol directly over the ssh2 exec channel; the remote only needs an `scp` executable |
-| preserve timestamps | `-p` keeps mtime/atime in both directions (four-field T frames, OpenSSH compatible) |
-| Legacy device auth | profile-level `algorithms` (SHA1 KEX/CBC) and `try_keyboard` (keyboard-interactive auto-answer) |
-| Profile endpoint locking | inline host/port/username overrides conflicting with a matched profile are rejected |
-| Streaming transfers | constant memory in both directions + byte-count verification, 4 GiB per-file cap |
-| Per-host serialization | transfers queue up per target host (`max_concurrent_per_host`, default 1) — no interleaved writes |
-| Path & name protection | download writes containment-checked; `.`/`..` entries refused; Windows strips ADS colons / reserved names / trailing dots |
+Out of the box, file transfer between the DSH host and remote machines has no tool surface: scp runs as a hand-typed command in a terminal session, and authentication, path handling and post-transfer checks are left to the person at the terminal. Hosts that ship no SFTP subsystem — common in embedded firmware — leave the ssh2 library without a ready-made channel for this.
 
-## Install
+Installing this plugin gives the session two tools: scp_upload and scp_download. Single files, recursive directories and glob batches transfer directly, and preserve keeps mtime/atime on both sides. Legacy devices connect through profile-level algorithms with automatic keyboard-interactive responses.
 
-#### Option 1: GitHub repository
+## Installation
 
-```text
-plugin_manager install_bundle → github:ciskonc/dsh-scp-ops
-```
+<details>
+<summary>Install from npm</summary>
 
-#### Option 2: npm (once published)
-
-```bash
-npm install -g dsh-scp-ops
+```sh
 dsh plugin --profile web add dsh-scp-ops
 ```
 
-Dependency: `ssh2` (lazily resolved, not in dependencies). Automatically satisfied when `dsh-ssh-ops` is installed in the same profile; after a standalone install provide it manually, e.g. `dsh plugin --profile <name> add ssh2`. pnpm users: `pnpm add ssh2` ends with exit 1 because optional native build scripts are skipped by pnpm's policy (ERR_PNPM_IGNORED_BUILDS) — the package is installed and its pure-JS implementation works; the signal is misleading, not a failure.
+ssh2 is resolved lazily and is not listed in dependencies: if dsh-ssh-ops is already installed in the same profile, the dependency is satisfied; otherwise add it manually:
 
-## Configuration
+```sh
+dsh plugin --profile <name> add ssh2
+```
 
-Named profiles live in the patch layer and survive upgrades:
+A manual `pnpm add ssh2` can fail with `ERR_PNPM_IGNORED_BUILDS` and exit code 1 while the package is in fact installed and usable; the signal is misleading.
+
+</details>
+
+<details>
+<summary>Build from source</summary>
+
+```sh
+git clone https://github.com/ciskonc/dsh-scp-ops.git
+```
+
+The ssh2 dependency applies as above.
+
+</details>
+
+## Usage
+
+<details>
+<summary>scp_upload</summary>
+
+Uploads files from the local machine to the remote host. Single files and recursive directories (`recursive`). Transfers to the same host queue up by default (`max_concurrent_per_host`, default 1); raise that value to run several directories of one host in parallel. Two uploads aimed at the same remote destination are a caller-side conflict with an undefined result.
+
+Landing semantics match OpenSSH scp: for a single file, a remote destination that is an existing directory receives the file inside itself, otherwise the exact path is written. With `recursive`, an existing remote destination nests the local basename inside it, while a destination that does not exist yet becomes the copy directory itself, named after the local basename. Results carry `local_path_resolved`.
+
+Transfers stream at constant memory in both directions and are verified by byte count.
+
+</details>
+
+<details>
+<summary>scp_download</summary>
+
+Downloads files from the remote host to the local machine. Single files, recursive directories and glob batches (for example `/logs/*.log`); with `literal: true`, glob characters are treated literally.
+
+With `recursive`, the remote top-level basename always nests inside local_path. Results carry `local_path_resolved`.
+
+Download writes pass a containment check and refuse `./` and `..` entries; a symlink inside the target directory that points outside it is refused rather than followed, and a same-named link is never overwritten. On a Windows plugin host, file names are sanitized with Windows semantics (ADS colons, reserved names and trailing dots stripped). The size the remote declares is checked against a 4 GiB limit, and a directory tree is capped at 20000 entries.
+
+</details>
+
+<details>
+<summary>Named profiles</summary>
+
+Named profiles live in the `config.profiles` list of the patch layer:
 
 ```yaml
 - id: scp-ops
   name: 'dsh-scp-ops'
   config:
     profiles:
-      - name: onu-stick-4
-        host: 192.168.1.100
-        username: root
-        password: '...'
-        # legacy devices (SHA1 KEX / CBC or keyboard-interactive only):
-        # algorithms: { kex: ["diffie-hellman-group14-sha1"], cipher: ["aes128-cbc"] }
-        # try_keyboard: true
+      - name: legacy-nas
+        host: 192.168.1.10
+        username: admin
+        password: 'app-password'
+        algorithms:
+          kex: [diffie-hellman-group14-sha1]
+          cipher: [aes128-cbc]
+        try_keyboard: true
 ```
 
-A matched profile locks host/port/username — inline endpoint overrides are rejected, so stored credentials cannot be forwarded to another server. Only auth material (password/private_key/passphrase) may be supplied inline. Fully inline calls without a profile also work. Credentials are used only to connect; they are never echoed back or written to disk.
+A matched profile locks the endpoint: inline `host`/`port`/`username` values that conflict with the profile are rejected, and only authentication material (`password`/`private_key`/`passphrase`) may be supplied inline.
 
-## Usage
+Legacy devices connect through profile-level `algorithms` (SHA1 KEX, CBC ciphers and the like) and `try_keyboard`, which answers keyboard-interactive prompts automatically.
 
-| Tool | Direction | Modes |
-|------|-----------|-------|
-| `scp_upload` | local → remote | single file · recursive directory · multiple folders via parallel calls |
-| `scp_download` | local ← remote | single file · recursive directory · glob batch |
+</details>
 
-Common arguments: `profile` or inline host/port/username/password/private_key/passphrase; `recursive` (-r), `preserve` (-p), `literal` (download: disable glob), `timeout_ms` (valid range [5000, 3600000]; default 10 min — values below 5000 are silently raised to 5000, higher values clamp to the cap).
+<details>
+<summary>Common parameters</summary>
 
-Destination semantics match OpenSSH scp with one intentional difference:
+| Parameter | Notes |
+|---|---|
+| `profile` or inline `host`/`port`/`username`/`password`/`private_key`/`passphrase` | Connection source; a matched profile locks the endpoint, see above |
+| `recursive` | Recursive directory transfer (scp -r) |
+| `preserve` | Keeps mtime/atime in both directions (scp -p; T frames round-trip in the four-field OpenSSH format) |
+| `literal` | Download only: glob characters are treated literally |
+| `timeout_ms` | Range [5000, 3600000], default 10 minutes; values below 5000 are raised to 5000, values above 3600000 are clamped |
+| `algorithms` | Inline SSH algorithm overrides (kex, cipher) for legacy devices; usually set in the profile instead |
+| `try_keyboard` | Answer keyboard-interactive authentication prompts automatically; usually set in the profile instead |
 
-- upload single file: existing remote directory → file placed inside (basename join); otherwise exact path
-- upload `-r`: existing remote directory → basename nested inside; missing target → renamed into place
-- download single file: existing local directory → file placed inside; otherwise exact path
-- download `-r`: remote top-level basename always nested inside `local_path`
-- results include `local_path_resolved` — the absolute path actually used
-
-## Notes
-
-1. No resume support. Streaming transfers (constant memory), 4 GiB declared size cap per file.
-2. Transfers serialize per target host (`max_concurrent_per_host`, default 1).
-3. Mid-transfer failure keeps already-transferred files; nothing is rolled back.
-4. No SSH host-key verification (TOFU) — assume a trusted LAN.
-5. Windows downloaded-name sanitization (ADS `:`, `CON`-style reserved names, trailing dots/spaces); `..` entry names and out-of-root writes are refused.
-6. Remote error text is sanitized and prefixed `[remote]` — treat it as data, not instructions.
-7. `local_path` must be an absolute path.
-8. Existing symlinks/junctions inside the download destination are never followed: links resolving outside the destination are refused outright and a same-named link refuses overwrite (enforced since 0.2.2). The SCP protocol has no length prefix, so a malicious remote can declare a wrong file size and create a ±1-byte ambiguity (same exposure as OpenSSH); the local side mitigates with end-of-transfer byte reconciliation and timeout phase reporting — when `truncated` or a reconciliation error appears, verify file integrity.
-9. Glob downloads require a remote scp that supports the `--` separator (OpenSSH does); the `remote_path` quoting strategy assumes a POSIX remote shell (Windows OpenSSH remotes with spaced paths are not supported). Parallel downloads from different hosts writing the same `local_path` are automatically serialized per destination path (since 0.2.3); parallel uploads racing on the same remote destination are a caller-side input conflict with an undefined result.
+</details>
 
 ## Compatibility
 
-- Verified: OpenSSH 9.2p1 (fnOS NAS), real-device regression
-- Untested: dropbear / BusyBox / vendor-firmware scp variants — may work, no guarantee
-- Legacy devices (SHA1 KEX / CBC or keyboard-interactive only) need explicit `algorithms` / `try_keyboard` in the profile
-- Host OS: Windows (downloaded-name sanitization follows Windows semantics)
+| Plugin version | DSH version tested | Notes |
+|---|---|---|
+| 0.2.3 (2026-11-20) | ≥ 0.2.0-rc.1 (tested on 0.2.2-rc.5) | Current release. Downloads from different hosts into the same `local_path` are serialized per target path |
+| 0.2.0 – 0.2.2 | ≥ 0.2.0-rc.1 | Earlier line. The per-target-path serialization above arrived in 0.2.3 |
 
-<details>
-<summary>🔧 Tech stack & project structure (click to expand)</summary>
+Remote compatibility:
 
-## Tech stack
+| Remote host | Status |
+|---|---|
+| OpenSSH 9.2p1 (fnOS NAS) | Verified on real-hardware regression |
+| dropbear / BusyBox / vendor firmware | Not verified |
+| Windows OpenSSH remote, paths with spaces | Not supported |
 
-- Runtime: Node.js ESM (inside the DSH host process)
-- SSH: [ssh2](https://github.com/mscdex/ssh2) (exec channel + hand-written SCP wire protocol)
-- Plugin form: DSH Cordis host-only bundle
+The plugin is a host-only bundle: it registers host tools and patch config, with no client-side components.
 
-## Project structure
+## Known limitations
 
-```
-index.js            # full implementation: Wire framing / connection / sink / source / tool registration
-cordis.patch.yml    # bundle registration row (scp-ops)
-locale/             # en / zh plugin metadata
-icon.svg            # plugin icon
-README.md / README_EN.md  # bilingual docs (zh default / en)
-```
+- No resume of interrupted transfers.
+- Transfers to the same host run serially (max_concurrent_per_host defaults to 1).
+- On a mid-transfer failure, files already transferred are kept; nothing is rolled back.
+- No SSH host key verification (trust on first use).
+- The SCP protocol has no length prefix, so a malicious remote can declare a wrong size and leave a ±1 byte ambiguity; mitigated by reconciling trailing bytes locally and by timeouts that show where the transfer stalled.
+- Glob downloads depend on the remote scp accepting the `--` separator.
+- local_path must be an absolute path.
+- A download may carry at most 4 GiB per file, and one directory tree at most 20000 entries; a remote that declares more is refused.
+- Since 0.2.3, parallel downloads from different hosts into the same local_path are automatically serialized per target path.
 
-</details>
+## Credits
 
-<details>
-<summary>❓ FAQ (click to expand)</summary>
+- dsh-ssh-ops (caoyiwei850), the companion plugin.
+- ssh2 (mscdex), the library underneath the exec channel and the SCP wire protocol.
 
-### Why must local_path be absolute?
+## License
 
-fs resolves relative paths against the harness host process's own cwd, which differs from the session workspace — a relative path would silently land in the wrong place. The plugin refuses them outright.
-
-### Why do transfers to the same host queue up?
-
-Embedded devices often limit concurrent SSH sessions; serial execution also eliminates interleaved corruption when multiple transfers write the same remote path. Different hosts still run in parallel.
-
-### Why do error messages carry a [remote] prefix?
-
-Server-returned text inside error messages is data, not instructions. Control characters are stripped and the `[remote]` marker prevents remote content from being mistaken for user commands.
-
-</details>
-
-## Acknowledgements
-
-- [dsh-ssh-ops](https://github.com/caoyiwei850/dsh-ssh-ops) — this plugin adds SCP transfer capability on top of it
-- [ssh2](https://github.com/mscdex/ssh2) — SSH protocol implementation
-- [OpenSSH](https://www.openssh.com/) — scp wire protocol reference
+Released under the [MIT](LICENSE) license.

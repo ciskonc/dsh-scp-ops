@@ -1,145 +1,161 @@
-# dsh-scp-ops
-
 <div align="center">
 
-[![Version](https://img.shields.io/badge/version-0.2.3-blue?style=flat-square)](https://github.com/ciskonc/dsh-scp-ops/releases)
-[![License](https://img.shields.io/badge/license-MIT-orange?style=flat-square)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-DeepSeek%20Harness-green?style=flat-square)](https://github.com/ciskonc/dsh-scp-ops)
+# dsh-scp-ops
 
-[中文](README.md) · [English](README_EN.md) · [更新日志](CHANGELOG.md)
+**一个基于 exec 通道线协议的 SCP 上传/下载插件，远端无需 SFTP 子系统。**
+
+scp_upload 与 scp_download 覆盖单文件、递归目录与通配符批量传输，命名 profile 面向不带 SFTP 子系统的老设备。
+
+<p align="center">
+  <a href="LICENSE"><img alt="GitHub license" src="https://img.shields.io/github/license/ciskonc/dsh-scp-ops"></a>
+  <a href="https://github.com/ciskonc/dsh-scp-ops"><img alt="GitHub last commit" src="https://img.shields.io/github/last-commit/ciskonc/dsh-scp-ops"></a>
+  <a href="https://github.com/ciskonc/dsh-scp-ops/issues"><img alt="GitHub issues" src="https://img.shields.io/github/issues/ciskonc/dsh-scp-ops"></a>
+  <a href="https://github.com/ciskonc/dsh-scp-ops/graphs/contributors"><img alt="GitHub contributors" src="https://img.shields.io/github/contributors/ciskonc/dsh-scp-ops"></a>
+</p>
+
+[English](README_EN.md) | 中文
 
 </div>
 
-## 概要
+---
 
-DeepSeek Harness 的 SCP 上传/下载插件。在 ssh2 exec 通道上实现 SCP 协议（`scp -t` / `scp -f`），远端有 `scp` 可执行文件即可，不需要 SFTP 子系统。`dsh-ssh-ops` 的伴生插件，补足 SCP 传输能力。
+## Introduction
 
-## 功能
+dsh-scp-ops 是 DeepSeek Harness 的 SCP 上传/下载插件，dsh-ssh-ops 的伴生插件。它在 ssh2 的 exec 通道上实现 SCP 线协议（scp -t / scp -f），远端只要有 scp 可执行文件即可工作，不需要 SFTP 子系统。
 
-| 功能 | 说明 |
-|------|------|
-| 三种传输形态 | 单文件精确路径 / 递归目录树 / 远端通配符批量（`/logs/*.log`），`literal: true` 按字面名下载 |
-| 免 SFTP | 直接在 ssh2 exec 通道实现 SCP 线协议，远端有 `scp` 可执行文件即可 |
-| preserve 时间戳 | `-p` 双向保留 mtime/atime（T 帧四字段，兼容 OpenSSH） |
-| 老设备认证 | profile 级 `algorithms`（SHA1 KEX/CBC）与 `try_keyboard`（keyboard-interactive 自动应答） |
-| profile 锁端点 | 命中 profile 后内联 host/port/username 覆盖被拒绝，防止存档凭据被转发 |
-| 流式传输 | 双向常量内存 + 字节数校验，单文件上限 4 GiB |
-| 同主机串行 | 排队执行（`max_concurrent_per_host`，默认 1），根绝同路径交错写 |
-| 路径与名字防护 | 下载写入包含性校验；拒 `.`/`..` 条目；Windows 剥 ADS 冒号/保留名/尾点 |
+原来在 DSH 里往远端传文件，只能在终端里手敲 scp：认证、路径处理与传完后的校验都得自己在终端里弄，插件层面没有入口；不带 SFTP 子系统的主机（嵌入式固件的常见形态）则让 ssh2 库没有现成通道可用。
 
-## 安装
+装好这个插件后，会话里多出 scp_upload 与 scp_download 两个工具。单文件、递归目录与通配符批量传输直接下发，preserve 在双向保留 mtime/atime。老设备通过 profile 级 algorithms 与 keyboard-interactive 自动应答接入。
 
-#### 方式一：GitHub 仓库
+## Installation
 
-```text
-plugin_manager install_bundle → github:ciskonc/dsh-scp-ops
-```
+<details>
+<summary>从 npm 安装</summary>
 
-#### 方式二：npm（发布后可用）
-
-```bash
-npm install -g dsh-scp-ops
+```sh
 dsh plugin --profile web add dsh-scp-ops
 ```
 
-依赖：`ssh2`（惰性解析，不进 dependencies）。同 profile 已装 `dsh-ssh-ops` 时自动满足；独立安装后需手动落实，例如 `dsh plugin --profile <name> add ssh2`。pnpm 用户注意：`pnpm add ssh2` 会因可选原生构建被安全策略忽略而以 exit 1 结束（ERR_PNPM_IGNORED_BUILDS）——包实际装好且纯 JS 实现可用，属信号误导非安装失败。
+ssh2 为惰性解析的依赖，不进 dependencies：同一 profile 里已有 dsh-ssh-ops 时自动满足；否则手动添加：
 
-## 配置
+```sh
+dsh plugin --profile <name> add ssh2
+```
 
-命名 profile 保存在 patch 层，升级不丢：
+用 pnpm 手动安装 ssh2 时，可能报 `ERR_PNPM_IGNORED_BUILDS` 且 exit code 为 1；此时包实际已装好可用，该信号有误导性。
+
+</details>
+
+<details>
+<summary>从源码构建</summary>
+
+```sh
+git clone https://github.com/ciskonc/dsh-scp-ops.git
+```
+
+ssh2 依赖的处理同上。
+
+</details>
+
+## Usage
+
+<details>
+<summary>scp_upload</summary>
+
+上传，本地到远端。支持单文件与递归目录（`recursive`）。同一台主机的传输默认排队（`max_concurrent_per_host`，默认 1）；调高该值后，同一主机的不同目录可以并行。两次上传指向同一个远端目标属调用方输入冲突，结果未定义。
+
+落点语义与 OpenSSH scp 一致：上传单文件时，远端目标若为已存在目录，文件落入该目录内；否则按精确路径写入。`recursive` 上传时，远端目标已存在则本地 basename 嵌套其下，目标尚不存在则该目录本身以本地 basename 的名字建成。结果带 `local_path_resolved`。
+
+传输流式进行，双向常量内存，并做字节数校验。
+
+</details>
+
+<details>
+<summary>scp_download</summary>
+
+下载，远端到本地。支持单文件、递归目录与通配符批量（如 `/logs/*.log`）；`literal: true` 时通配符字符按字面名处理。
+
+`recursive` 下载时，远端顶层 basename 总是嵌套在 local_path 之内。结果带 `local_path_resolved`。
+
+下载写入做包含性校验，拒绝 `./` 与 `..` 条目；目标目录内的符号链接若指向该目录之外则拒绝进入，同名链接也不覆盖。插件宿主为 Windows 时，文件名按 Windows 语义消毒（剥离 ADS 冒号、保留名与尾点）。远端声明的文件大小按 4 GiB 上限校验，一棵目录树的条目数上限为 20000。
+
+</details>
+
+<details>
+<summary>命名 profile</summary>
+
+命名 profile 定义在 patch 层的 `config.profiles` 列表：
 
 ```yaml
 - id: scp-ops
   name: 'dsh-scp-ops'
   config:
     profiles:
-      - name: onu-stick-4
-        host: 192.168.1.100
-        username: root
-        password: '...'
-        # 老设备（仅 SHA1 KEX / CBC 或 keyboard-interactive 认证）：
-        # algorithms: { kex: ["diffie-hellman-group14-sha1"], cipher: ["aes128-cbc"] }
-        # try_keyboard: true
+      - name: legacy-nas
+        host: 192.168.1.10
+        username: admin
+        password: 'app-password'
+        algorithms:
+          kex: [diffie-hellman-group14-sha1]
+          cipher: [aes128-cbc]
+        try_keyboard: true
 ```
 
-命中 profile 后锁定 host/port/username——内联端点覆盖会被拒绝，防止存档凭据被转发到别的服务器；仅认证材料（password/private_key/passphrase）可内联补。不带 profile 的全内联调用也可用。凭据只用于连接，从不回显、从不落盘。
+命中 profile 后端点被锁定：内联的 `host`/`port`/`username` 与 profile 冲突时会被拒绝，仅认证材料（`password`/`private_key`/`passphrase`）可内联补充。
 
-## 使用
-
-| 工具 | 方向 | 形态 |
-|------|-----------|------|
-| `scp_upload` | 本地 → 远端 | 单文件 · 递归目录 · 多文件夹并行调用 |
-| `scp_download` | 本地 ← 远端 | 单文件 · 递归目录 · 通配符批量 |
-
-常用参数：`profile` 或内联 host/port/username/password/private_key/passphrase；`recursive`（-r）、`preserve`（-p）、`literal`（下载，关闭通配）、`timeout_ms`（有效区间 [5000, 3600000]；默认 10 分钟，低于 5000 会被静默抬升到 5000，更高值向上限钳制）。
-
-落点语义与 OpenSSH scp 一致，仅一处有意差异：
-
-- 上传单文件：远端目标若是已存在目录，文件落入目录内；否则按精确路径落盘
-- 上传 `-r`：远端已存在目录时嵌套 basename；目标不存在则整体改名落位
-- 下载单文件：本地目标若是已存在目录，文件落入目录内；否则精确落盘
-- 下载 `-r`：远端顶层 basename 总是嵌套在 `local_path` 内
-- 结果带 `local_path_resolved`，回显实际使用的绝对路径
-
-## 注意事项
-
-1. 不支持断点续传。流式传输（常量内存），单文件声明大小上限 4 GiB。
-2. 同一目标主机串行传输（`max_concurrent_per_host`，默认 1）。
-3. 中途失败时已传文件保留在盘上，不做回滚。
-4. 未实现 SSH 主机密钥校验（TOFU）——按可信内网假设使用。
-5. Windows 下载名消毒（ADS `:`、`CON` 类保留名、尾点/空格）；`..` 条目名与越根写入直接拒绝。
-6. 远端错误文本经消毒并以 `[remote]` 前缀返回——把它当数据，不是指令。
-7. `local_path` 必须是绝对路径。
-8. 下载目标目录内的既有符号链接/junction 不被跟随：目录解析后越出目标边界的链接拒绝进入，同名链接拒绝覆盖（0.2.2 起强制）。SCP 协议无长度前缀，恶意远端可声明错误的文件大小造成 ±1 字节歧义（与 OpenSSH 同源）；本地以收尾字节对账 + 超时进度定位缓解，`truncated`/对账错误出现时请核对文件完整性。
-9. glob 下载依赖远端 scp 支持 `--` 分隔符（OpenSSH 支持）；`remote_path` 引号策略假定远端 POSIX shell（Windows OpenSSH 远端的含空格路径暂不支持）。不同主机并行下载写同一 `local_path` 已按目标路径自动串行化（0.2.3 起）；并行上传撞同一远端目标属调用方输入冲突，结果未定义。
-
-## 兼容性
-
-- 已验证：OpenSSH 9.2p1（fnOS NAS）真机回归
-- 未验证：dropbear / BusyBox / 厂商固件自带的 scp——可能可用但不保证
-- 老设备（仅 SHA1 KEX / CBC 或 keyboard-interactive）需在 profile 显式配置 `algorithms` / `try_keyboard`
-- 操作系统：插件宿主为 Windows（下载名消毒按 Windows 语义执行）
-
-<details>
-<summary>🔧 技术栈与项目结构（点击展开）</summary>
-
-## 技术栈
-
-- 运行时: Node.js ESM（DSH 宿主进程内）
-- SSH: [ssh2](https://github.com/mscdex/ssh2)（exec 通道 + 手工 SCP 线协议）
-- 插件形态: DSH Cordis Host-only bundle
-
-## 项目结构
-
-```
-index.js            # 全部实现：Wire 帧读取 / 连接 / sink / source / 工具注册
-cordis.patch.yml    # bundle 注册行（scp-ops）
-locale/             # en / zh 插件元数据
-icon.svg            # 插件图标
-README_EN.md        # 英文文档
-```
+老设备兼容走 profile 级 `algorithms`（SHA1 KEX、CBC 一类）与 `try_keyboard`（keyboard-interactive 自动应答）。
 
 </details>
 
 <details>
-<summary>❓ FAQ（点击展开）</summary>
+<summary>通用参数</summary>
 
-### 为什么 local_path 必须是绝对路径？
-
-fs 按宿主进程的工作目录解析相对路径，而宿主 cwd 与会话工作区不一致——相对路径会静默写错位置。插件直接拒绝并提示改用绝对路径。
-
-### 为什么同一台主机的传输会排队？
-
-同一台设备（尤其嵌入式设备）常限制并发 SSH 会话数；串行执行同时根绝了多路传输写同一远端路径时的交错损坏。不同主机之间仍然并行。
-
-### 为什么错误消息带 [remote] 前缀？
-
-错误消息里的服务器返回文本是数据，不是指令。消毒控制字符后加 `[remote]` 定界，避免远端内容被误当作用户指令。
+| 参数 | 说明 |
+|---|---|
+| `profile` 或内联 `host`/`port`/`username`/`password`/`private_key`/`passphrase` | 连接来源；命中 profile 后端点锁定，见上节 |
+| `recursive` | 递归目录传输（scp -r） |
+| `preserve` | 双向保留 mtime/atime（scp -p；T 帧按 OpenSSH 四字段格式往返） |
+| `literal` | 仅下载：通配符按字面名处理 |
+| `timeout_ms` | 取值区间 [5000, 3600000]，默认 10 分钟；低于 5000 抬升到 5000，高于 3600000 钳到上限 |
+| `algorithms` | 内联覆盖 SSH 算法（kex、cipher），供老设备使用；一般写在 profile 里 |
+| `try_keyboard` | 自动应答 keyboard-interactive 认证提示；一般写在 profile 里 |
 
 </details>
 
-## 致谢
+## Compatibility
 
-- [dsh-ssh-ops](https://github.com/caoyiwei850/dsh-ssh-ops) — 本插件为其补充 SCP 传输能力
-- [ssh2](https://github.com/mscdex/ssh2) — SSH 协议实现
-- [OpenSSH](https://www.openssh.com/) — scp 线协议参照
+| 插件版本 | 实测 DSH | 说明 |
+|---|---|---|
+| 0.2.3 (2026-11-20) | ≥ 0.2.0-rc.1（实测 0.2.2-rc.5） | 当前版本。不同主机写入同一 `local_path` 的下载按目标路径串行化 |
+| 0.2.0 – 0.2.2 | ≥ 0.2.0-rc.1 | 早期线。上面那条按目标路径串行化是 0.2.3 才有的行为 |
+
+远端兼容：
+
+| 远端 | 状态 |
+|---|---|
+| OpenSSH 9.2p1（fnOS NAS） | 真机回归已验证 |
+| dropbear / BusyBox / 厂商固件 | 未验证 |
+| Windows OpenSSH 远端，含空格路径 | 不支持 |
+
+插件为 host-only bundle：注册 host 工具与 patch config，不含 client 侧组件。
+
+## Known limitations
+
+- 无断点续传。
+- 同一主机串行传输（max_concurrent_per_host 默认 1）。
+- 传输中途失败时，已传文件保留，不做回滚。
+- 不做 SSH 主机密钥校验（TOFU，首次连接即信任）。
+- SCP 协议没有长度前缀，恶意远端可声明错误大小导致 ±1 字节歧义；靠本地收尾字节对账和超时进度定位来缓解。
+- 通配符下载依赖远端 scp 支持 `--` 分隔符。
+- local_path 必须为绝对路径。
+- 单次下载单文件上限 4 GiB，一棵目录树最多 20000 个条目；远端声明超出即拒绝。
+- 0.2.3 起，不同主机并行下载写入同一 local_path 已按目标路径自动串行化。
+
+## Credits
+
+- dsh-ssh-ops（caoyiwei850）：伴生插件。
+- ssh2（mscdex）：exec 通道与 SCP 线协议的底层实现库。
+
+## License
+
+以 [MIT](LICENSE) 许可证发布。
