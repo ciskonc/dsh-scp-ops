@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.2.2 — 2026-11-20
+
+Security & robustness release after a three-perspective adversarial audit
+(protocol/security, contract/resources, dynamic verification on an isolated
+profile) plus an adversarial review of the fix plan itself.
+
+- **Fixed (P0)**: download containment is now anchored at real paths —
+  directories entering the stack are `realpath`-resolved after creation and
+  re-checked against the root's real path, and file writes refuse to overwrite
+  through an existing symlink/junction. A pre-planted junction inside the
+  destination can no longer redirect writes outside the boundary.
+- **Fixed**: transfer completion is reconciled against the declared byte
+  counts — a finished single/recursive transfer or a cleanly-exited glob batch
+  must leave the wire empty, otherwise a `byte-count mismatch` error is raised
+  instead of silently accepting size lies (±1-byte ambiguity remains inherent
+  to the SCP protocol; documented).
+- **Fixed**: a signal-killed remote (`exit(null, signal)`) is no longer mapped
+  to success — glob batches now fail with the signal in the message, and
+  unknown exit outcomes report `truncated: true`.
+- **Fixed**: a fatal (0x02) frame in a glob batch now forces `truncated: true`
+  and is counted separately (`fatal error(s)` in the summary; warning entries
+  carry a `fatal error` prefix). Legacy summary shape is preserved when only
+  warnings are present.
+- **Fixed**: a failed ssh2 resolution is no longer cached forever — the
+  three-step resolution chain retries on the next call after the environment
+  is repaired; the failure message now includes the `DSH_PROFILE_DIR` state.
+- **Fixed**: `private_key` given as a file path is stat-checked before reading
+  (regular file only, 64 KiB limit) — a huge path can no longer balloon memory.
+- **Fixed**: `ws.end()` completion is raced against the abort signal — a hung
+  end (AV hooks, file locks) can no longer wedge the call and the per-host
+  gate forever. The Wire constructor now actually stores the abort signal,
+  activating abort propagation in `writeAll`/`writeToWriteStream`/`drainToFile`.
+- **Fixed**: `private_key` error messages no longer echo the first characters
+  of the argument (length only).
+- **Changed**: timeout errors name the current phase
+  (`phase: draining "<file>" (consumed/declared bytes)`) for protocol-level
+  diagnosis; `truncated` semantics widened to "completeness unconfirmed"
+  (early close / signal kill / remote fatal); tool descriptions declare that
+  parallel same-destination writes are a caller-side input conflict.
+- **Docs**: npm/pnpm install notes for the lazy `ssh2` dependency,
+  `timeout_ms` valid range, glob `--` separator and POSIX-remote-shell
+  assumptions, and the symlink/size-ambiguity security model.
+
 ## 0.2.1 — 2026-11-17
 
 - **Fixed**: ssh2 resolution no longer assumes the bundle's installed directory

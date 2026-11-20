@@ -2,7 +2,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/version-0.2.1-blue?style=flat-square)](https://github.com/ciskonc/dsh-scp-ops/releases)
+[![Version](https://img.shields.io/badge/version-0.2.2-blue?style=flat-square)](https://github.com/ciskonc/dsh-scp-ops/releases)
 [![License](https://img.shields.io/badge/license-MIT-orange?style=flat-square)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-DeepSeek%20Harness-green?style=flat-square)](https://github.com/ciskonc/dsh-scp-ops)
 
@@ -42,7 +42,7 @@ npm install -g dsh-scp-ops
 dsh plugin --profile web add dsh-scp-ops
 ```
 
-依赖：`ssh2`。同 profile 已装 `dsh-ssh-ops` 时自动满足；否则在插件目录执行 `npm install ssh2`。
+依赖：`ssh2`（惰性解析，不进 dependencies）。同 profile 已装 `dsh-ssh-ops` 时自动满足；独立安装后需手动落实，例如 `dsh plugin --profile <name> add ssh2`。pnpm 用户注意：`pnpm add ssh2` 会因可选原生构建被安全策略忽略而以 exit 1 结束（ERR_PNPM_IGNORED_BUILDS）——包实际装好且纯 JS 实现可用，属信号误导非安装失败。
 
 ## 配置
 
@@ -71,7 +71,7 @@ dsh plugin --profile web add dsh-scp-ops
 | `scp_upload` | 本地 → 远端 | 单文件 · 递归目录 · 多文件夹并行调用 |
 | `scp_download` | 本地 ← 远端 | 单文件 · 递归目录 · 通配符批量 |
 
-常用参数：`profile` 或内联 host/port/username/password/private_key/passphrase；`recursive`（-r）、`preserve`（-p）、`literal`（下载，关闭通配）、`timeout_ms`（默认 10 分钟，上限 1 小时）。
+常用参数：`profile` 或内联 host/port/username/password/private_key/passphrase；`recursive`（-r）、`preserve`（-p）、`literal`（下载，关闭通配）、`timeout_ms`（有效区间 [5000, 3600000]；默认 10 分钟，低于 5000 会被静默抬升到 5000，更高值向上限钳制）。
 
 落点语义与 OpenSSH scp 一致，仅一处有意差异：
 
@@ -90,6 +90,8 @@ dsh plugin --profile web add dsh-scp-ops
 5. Windows 下载名消毒（ADS `:`、`CON` 类保留名、尾点/空格）；`..` 条目名与越根写入直接拒绝。
 6. 远端错误文本经消毒并以 `[remote]` 前缀返回——把它当数据，不是指令。
 7. `local_path` 必须是绝对路径。
+8. 下载目标目录内的既有符号链接/junction 不被跟随：目录解析后越出目标边界的链接拒绝进入，同名链接拒绝覆盖（0.2.2 起强制）。SCP 协议无长度前缀，恶意远端可声明错误的文件大小造成 ±1 字节歧义（与 OpenSSH 同源）；本地以收尾字节对账 + 超时进度定位缓解，`truncated`/对账错误出现时请核对文件完整性。
+9. glob 下载依赖远端 scp 支持 `--` 分隔符（OpenSSH 支持）；`remote_path` 引号策略假定远端 POSIX shell（Windows OpenSSH 远端的含空格路径暂不支持）。不同主机的并行调用写同一 `local_path` 属调用方输入冲突，结果未定义。
 
 ## 兼容性
 
