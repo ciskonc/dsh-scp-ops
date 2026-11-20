@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.2.3 — 2026-11-20
+
+Full hardening sweep: every remaining audit finding addressed (P2 batch),
+adversarially reviewed and verified on an in-process ssh2 server harness.
+
+- **Fixed**: a glob batch closing cleanly with zero files now fails with a
+  "pattern matched nothing (or the remote aborted)" message instead of a raw
+  transport error.
+- **Fixed**: a download that transfers nothing now says `NOTHING transferred`
+  in the result message (previously indistinguishable from a plain success).
+- **Fixed**: remote-supplied text sanitization now also strips zero-width,
+  bidirectional-override (RTLO) and word-joiner characters, and folds
+  repeated spaces — invisible instruction carriers can no longer ride along
+  in error messages.
+- **Fixed**: downloaded entry names neutralize CR and invisible/bidirectional
+  characters (replaced with `_` during name sanitization).
+- **Fixed**: `max_concurrent_per_host` validation rejects NaN (previously it
+  silently disabled the concurrency limit).
+- **Fixed**: the second tool registration failure now rolls back the first
+  registration instead of leaking it.
+- **Changed**: downloads are additionally serialized per local destination
+  path (a per-key mutex inside the per-host gate), so parallel calls from
+  different hosts writing the same `local_path` can no longer interleave
+  writes; uploads remain unlocked (their local side is read-only).
+- **Changed**: idle per-host queue entries are removed after the last
+  transfer; the wire buffer is released immediately on protocol failure.
+
 ## 0.2.2 — 2026-11-20
 
 Security & robustness release after a three-perspective adversarial audit
