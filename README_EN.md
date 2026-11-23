@@ -115,7 +115,8 @@ Legacy devices connect through profile-level `algorithms` (SHA1 KEX, CBC ciphers
 | `profile` or inline `host`/`port`/`username`/`password`/`private_key`/`passphrase` | Connection source; a matched profile locks the endpoint, see above |
 | `recursive` | Recursive directory transfer (scp -r) |
 | `preserve` | Keeps mtime/atime in both directions (scp -p; T frames round-trip in the four-field OpenSSH format) |
-| `literal` | Download only: glob characters are treated literally |
+| `literal` | Download only: glob characters are treated literally (on POSIX remotes the glob metacharacters are escaped in transit, bypassing the remote scp's own glob) |
+| `remote_shell` | `posix` / `win`: how remote paths are quoted; auto-detected from the path shape by default (drive-letter/UNC paths are treated as Windows). Set explicitly for Windows remotes with relative paths |
 | `timeout_ms` | Range [5000, 3600000], default 10 minutes; values below 5000 are raised to 5000, values above 3600000 are clamped |
 | `algorithms` | Inline SSH algorithm overrides (kex, cipher) for legacy devices; usually set in the profile instead |
 | `try_keyboard` | Answer keyboard-interactive authentication prompts automatically; usually set in the profile instead |
@@ -126,7 +127,8 @@ Legacy devices connect through profile-level `algorithms` (SHA1 KEX, CBC ciphers
 
 | Plugin version | DSH version tested | Notes |
 |---|---|---|
-| 0.2.3 (2026-11-20) | ≥ 0.2.0-rc.1 (tested on 0.2.2-rc.5) | Current release. Downloads from different hosts into the same `local_path` are serialized per target path |
+| 0.2.4 (2026-11-23) | ≥ 0.2.0-rc.1 (tested on 0.2.2-rc.5) | Current release. Remote-shell quoting adaptation (Windows cmd remotes work out of the box), literal glob escaping, drive-letter glob prefix, upload summary shows the remote destination, and a fourth ssh2 resolution hop |
+| 0.2.3 (2026-11-20) | ≥ 0.2.0-rc.1 | Downloads from different hosts into the same `local_path` are serialized per target path |
 | 0.2.0 – 0.2.2 | ≥ 0.2.0-rc.1 | Earlier line. The per-target-path serialization above arrived in 0.2.3 |
 
 Remote compatibility:
@@ -134,8 +136,20 @@ Remote compatibility:
 | Remote host | Status |
 |---|---|
 | OpenSSH 9.2p1 (fnOS NAS) | Verified on real-hardware regression |
+| **Windows OpenSSH 9.5 (cmd.exe)** | **Verified on real-machine regression (since 0.2.4)**: drive-letter paths / spaced paths / non-ASCII names / recursive / glob — see "When the remote is Windows" below |
 | dropbear / BusyBox / vendor firmware | Not verified |
-| Windows OpenSSH remote, paths with spaces | Not supported |
+
+### When the remote is Windows
+
+Behaviour and caveats when the remote is Windows OpenSSH (default shell cmd.exe) — all since 0.2.4:
+
+- **Path quoting adapts automatically**: drive-letter/UNC paths are quoted with Windows semantics — double-quoted when they contain a space or an embedded double quote (`"` escaped as `""`), passed bare otherwise; POSIX paths keep single quotes. Use `remote_shell: "win"` to disambiguate a Windows remote with relative paths.
+- **Drive-letter paths work**: `C:/Users/...` works out of the box; glob batches accept a drive prefix (e.g. `C:/logs/*.txt`).
+- **literal downloads of names with `[]`**: on POSIX remotes the glob metacharacters are escaped in transit (bypassing the remote scp's own glob parsing); on Windows remotes the path is sent as-is (its scp argv has no glob layer).
+- **Non-ASCII file names**: the SCP wire protocol carries names as raw bytes; a remote that decodes them in its legacy ANSI code page may display mojibake in its console — verify actual byte-level names over SFTP. Content itself is unaffected.
+- **Negotiation overhead**: every transfer carries a fixed ~2-15 s SSH+scp negotiation cost regardless of file size; plan batches of small files accordingly.
+- **Uploads do not create missing parent directories**: uploading into a deep remote directory that does not exist fails — create it first.
+- **Recursive downloads do not skip hidden files**: `.git` and friends are pulled in full — mind the tree size.
 
 The plugin is a host-only bundle: it registers host tools and patch config, with no client-side components.
 
@@ -150,6 +164,7 @@ The plugin is a host-only bundle: it registers host tools and patch config, with
 - local_path must be an absolute path.
 - A download may carry at most 4 GiB per file, and one directory tree at most 20000 entries; a remote that declares more is refused.
 - Since 0.2.3, parallel downloads from different hosts into the same local_path are automatically serialized per target path.
+- Since 0.2.4, a successful upload summary shows the remote destination (`remote path: ...`) while a download summary shows where files landed locally (`saved to ...`) — uploads no longer print the local source path.
 
 ## Credits
 

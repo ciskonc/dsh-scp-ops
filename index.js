@@ -44,18 +44,48 @@ function loadSsh2() {
   if (!ssh2LoadPromise) {
     ssh2LoadPromise = (async () => {
       const clientOf = (mod) => mod?.Client ?? mod?.default?.Client;
+      // Track how each hop failed so the final error can name the real gap
+      // (v0.2.4: the "report it to the user" message now lists every tried
+      // anchor instead of blaming one env var that the host may not inject).
+      const attempts = [];
       // 1) Plain ESM import along this module's own resolution chain.
       try {
         const mod = await import('ssh2');
         if (typeof clientOf(mod) === 'function') return mod;
-      } catch {}
+        attempts.push(`import('ssh2') resolved but no Client export (resolved via ${import.meta.url})`);
+      } catch (e) {
+        attempts.push(`import('ssh2') failed: ${e.code ?? e.message}`);
+      }
       // 2) Resolve from THIS FILE's real location (import.meta.url): survives
       //    symlinked, renamed or relocated installs — no hard-coded dir name.
       try {
         const here = path.dirname(fileURLToPath(import.meta.url));
         const mod = createRequire(path.join(here, 'index.js'))('ssh2');
         if (typeof clientOf(mod) === 'function') return { default: mod };
-      } catch {}
+        attempts.push(`createRequire(${path.join(here, 'index.js')}) resolved but no Client export`);
+      } catch (e) {
+        attempts.push(`createRequire(next to this file) failed: ${e.code ?? e.message}`);
+      }
+      // 2b, v0.2.4 (W-1): Junction/link installs land this file in a source
+      // tree whose ancestor chain usually has no node_modules. Walk UP from
+      // this file's real location looking for any hoisted ssh2 (e.g. the
+      // profile's node_modules reached through the workspace, or a sibling
+      // package's dependencies). Bounded walk: at most 8 levels up.
+      try {
+        let dir = path.dirname(fileURLToPath(import.meta.url));
+        for (let i = 0; i < 8; i += 1) {
+          const parent = path.dirname(dir);
+          if (parent === dir) break; // reached the filesystem root
+          dir = parent;
+          try {
+            const mod = createRequire(path.join(dir, 'node_modules', 'ssh2', 'package.json'))('ssh2');
+            if (typeof clientOf(mod) === 'function') return { default: mod };
+          } catch {}
+        }
+        attempts.push('no node_modules/ssh2 found walking up from this file (8 levels)');
+      } catch (e) {
+        attempts.push(`upward walk failed: ${e.message}`);
+      }
       // 3) Last resort: the profile's hoisted node_modules via DSH_PROFILE_DIR.
       //    package.json is a stable resolution anchor — no bundle dir name assumed.
       const profileDir = process.env.DSH_PROFILE_DIR;
@@ -63,9 +93,16 @@ function loadSsh2() {
         try {
           const mod = createRequire(path.join(profileDir, 'package.json'))('ssh2');
           if (typeof clientOf(mod) === 'function') return { default: mod };
-        } catch {}
+          attempts.push(`createRequire(${path.join(profileDir, 'package.json')}) resolved but no Client export`);
+        } catch (e) {
+          attempts.push(`DSH_PROFILE_DIR anchor (${profileDir}) failed: ${e.code ?? e.message}`);
+        }
+      } else {
+        attempts.push('DSH_PROFILE_DIR is not set in this process (hosts inject it into tool shells, not always into plugin contexts)');
       }
-      return null;
+      const detail = attempts.join('; ');
+      fail(`The 'ssh2' package is not resolvable from the dsh-scp-ops bundle. Tried: ${detail}. Fix: install ssh2 where this bundle can reach it (e.g. "dsh plugin add ssh2" into the profile, or place it beside the bundle). This is an installation problem — report it to the user instead of retrying.`);
+      return null; // unreachable; fail() always throws
     })();
     // F5 (v0.2.2): a failed load must not be cached forever — the environment
     // may be repaired while the process is still running (deps installed
@@ -600,6 +637,34 @@ async function resolveAuth(args, profiles) {
  * SCP sink (upload, `scp -t`) and source (download, `scp -f`) drivers.
  * ------------------------------------------------------------------ */
 
+/** v0.2.4 (W-2): remote shell quoting. POSIX shells strip single quotes, but
+ *  Windows OpenSSH's default shell (cmd.exe) does NOT — the quote characters
+ *  would become part of the path and every transfer fails with a misleading
+ *  ENOENT (the path arrives as 'C:/...' including the quotes). The plugin
+ *  already validates/whitelists every path it sends, so on Windows remotes we
+ *  quote with double quotes only when the path contains a space (cmd strips
+ *  those), and pass clean paths through bare. POSIX keeps the proven shq().
+ * Detection is name-based: Windows OpenSSH identifies itself in the exec
+ * channel and Windows paths always carry a drive letter or UNC prefix when
+ * absolute — but relative POSIX-style paths are also legitimate, so the
+ * signal we actually use is a `remote_shell` argument the caller can pin,
+ * defaulting to auto-detection from the path shape. */
+function winRemotePath(p) {
+  const s = String(p);
+  return /^[a-zA-Z]:[\\/]/.test(s) || /^\\\\/.test(s);
+}
+
+function remoteQuote(p, remoteShell) {
+  const s = String(p);
+  const mode = remoteShell ?? (winRemotePath(s) ? 'win' : 'posix');
+  if (mode === 'win') {
+    // Quote when the path contains a space OR an embedded double quote — a
+    // bare path with '"' would let that quote act as cmd quoting.
+    return /[\s"]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  }
+  return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
 function shq(p) {
   return `'${String(p).replace(/'/g, `'\\''`)}'`;
 }
@@ -616,8 +681,11 @@ function isGlobPattern(p) {
  */
 function validateGlobPattern(pattern) {
   const p = String(pattern);
-  if (!/^[\w.\-/*?[\]\u4e00-\u9fff]+$/.test(p)) {
-    fail('Glob remote_path may only contain letters/digits/._-/*?[] (Han U+4E00-9FFF allowed) — no spaces, quotes, ;|&$` or other shell characters.');
+  // v0.2.4 (H-2): Windows remote paths legitimately carry a drive letter —
+  // allow an optional single drive prefix before the whitelist body.
+  const body = p.replace(/^[a-zA-Z]:[\\/]/, '');
+  if (!/^[\w.\-/*?[\]\u4e00-\u9fff]+$/.test(body)) {
+    fail('Glob remote_path may only contain letters/digits/._-/*?[] (Han U+4E00-9FFF allowed; an optional drive prefix like C:/ is accepted) — no spaces, quotes, ;|&$` or other shell characters.');
   }
   if (/(^|\/)\.\.(\/|$)/.test(p)) {
     fail('Glob remote_path must not contain ".." path segments — scope the pattern inside one directory.');
@@ -997,7 +1065,24 @@ async function runScp(kind, args, exec, profiles, gate, pathMutex) {
     try {
       const glob = !isUpload && !a.literal && isGlobPattern(a.remote_path);
       if (glob) validateGlobPattern(a.remote_path);
-      const patternArg = isUpload || !glob ? shq(a.remote_path) : String(a.remote_path);
+      const remoteShell = a.remote_shell ?? (winRemotePath(a.remote_path) ? 'win' : 'posix');
+      // H-1 (v0.2.4): literal names with glob characters still hit the
+      // remote scp's own internal glob() (it globs its argv even when the
+      // shell didn't). Escape the glob metacharacters so scp's fnmatch sees
+      // them as literals. Windows scp.exe takes the path unquoted/quoted but
+      // its argv is already literal from cmd — no escape layer exists there.
+      let literalArg = null;
+      if (!isUpload && a.literal) {
+        const raw = String(a.remote_path);
+        literalArg = remoteShell === 'win'
+          ? raw
+          : raw.replace(/[*?[\]\\]/g, (ch) => `\\${ch}`);
+      }
+      const patternArg = literalArg != null
+        ? (remoteShell === 'win' && /\s/.test(literalArg) ? `"${literalArg.replace(/"/g, '""')}"` : literalArg)
+        : isUpload || !glob
+          ? remoteQuote(a.remote_path, remoteShell)
+          : (remoteShell === 'win' ? String(a.remote_path).replace(/"/g, '""') : String(a.remote_path));
       const flags = [];
       if (a.recursive) flags.push('-r');
       if (a.preserve) flags.push('-p');
@@ -1030,6 +1115,7 @@ async function runScp(kind, args, exec, profiles, gate, pathMutex) {
         local_path: a.local_path,
         local_path_resolved: path.resolve(a.local_path),
         remote_path: a.remote_path,
+        remote_path_resolved: a.remote_path, // v0.2.4 (M-1): echo for summary symmetry
         files: acc.files,
         directories: acc.directories,
         bytes: acc.bytes,
@@ -1070,7 +1156,7 @@ function renderSummary(value) {
   let warn = '';
   if (fatalCount > 0) warn = ` [${warnCount} remote warning(s), ${fatalCount} fatal error(s)]`;
   else if (warnCount > 0) warn = ` [${warnCount} remote warning(s)]`;
-  return `scp ${value.operation} ok ${arrow} ${value.username}@${value.host} — ${value.files} file(s)${dirs}, ${kb}, ${t}${trunc}${warn} (saved to ${value.local_path_resolved})`;
+  return `scp ${value.operation} ok ${arrow} ${value.username}@${value.host} — ${value.files} file(s)${dirs}, ${kb}, ${t}${trunc}${warn} (${value.operation === 'upload' ? `remote path: ${value.remote_path}` : `saved to ${value.local_path_resolved}`})`;
 }
 
 function makeScpTool(kind, profiles, gate, pathMutex) {
@@ -1085,6 +1171,7 @@ function makeScpTool(kind, profiles, gate, pathMutex) {
       username: { type: 'string', description: 'Remote user.' },
       local_path: { type: 'string', description: 'Requested local path (echoes the argument).' },
       local_path_resolved: { type: 'string', description: 'Absolute local path actually used.' },
+      remote_path_resolved: { type: 'string', description: 'Remote path as sent to the remote side (uploads echo the destination; downloads echo the source).' },
       remote_path: { type: 'string', description: 'Remote path involved.' },
       files: { type: 'number', description: 'Files transferred.' },
       directories: { type: 'number', description: 'Directories transferred.' },
@@ -1109,6 +1196,7 @@ function makeScpTool(kind, profiles, gate, pathMutex) {
     recursive: { type: 'boolean', description: 'Transfer directories recursively (SCP -r). Default false.' },
     preserve: { type: 'boolean', description: 'Preserve modification/access times (SCP -p). Default false.' },
     timeout_ms: { type: 'number', description: 'Overall deadline in milliseconds; default 600000 (10 min), min 5000, max 3600000 (1 h) — larger values are clamped.' },
+    remote_shell: { type: 'string', enum: ['posix', 'win'], description: 'Shell of the REMOTE host, used to quote remote paths correctly. Default: auto-detected from the remote path shape (drive-letter/UNC paths are treated as Windows). Set explicitly when the remote is Windows with non-drive-letter relative paths, or a POSIX remote with Windows-like literal names.' },
   };
 
   const description = isUpload

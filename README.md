@@ -115,7 +115,8 @@ ssh2 依赖的处理同上。
 | `profile` 或内联 `host`/`port`/`username`/`password`/`private_key`/`passphrase` | 连接来源；命中 profile 后端点锁定，见上节 |
 | `recursive` | 递归目录传输（scp -r） |
 | `preserve` | 双向保留 mtime/atime（scp -p；T 帧按 OpenSSH 四字段格式往返） |
-| `literal` | 仅下载：通配符按字面名处理 |
+| `literal` | 仅下载：通配符按字面名处理（POSIX 远端对 glob 元字符转义后下发，绕过远端 scp 自身的 glob） |
+| `remote_shell` | `posix` / `win`：远端 shell 引用方式；默认按远端路径形态自动判断（盘符/UNC 路径按 Windows 处理），Windows 远端相对路径建议显式指定 |
 | `timeout_ms` | 取值区间 [5000, 3600000]，默认 10 分钟；低于 5000 抬升到 5000，高于 3600000 钳到上限 |
 | `algorithms` | 内联覆盖 SSH 算法（kex、cipher），供老设备使用；一般写在 profile 里 |
 | `try_keyboard` | 自动应答 keyboard-interactive 认证提示；一般写在 profile 里 |
@@ -126,16 +127,29 @@ ssh2 依赖的处理同上。
 
 | 插件版本 | 实测 DSH | 说明 |
 |---|---|---|
-| 0.2.3 (2026-11-20) | ≥ 0.2.0-rc.1（实测 0.2.2-rc.5） | 当前版本。不同主机写入同一 `local_path` 的下载按目标路径串行化 |
-| 0.2.0 – 0.2.2 | ≥ 0.2.0-rc.1 | 早期线。上面那条按目标路径串行化是 0.2.3 才有的行为 |
+| 0.2.4 (2026-11-23) | ≥ 0.2.0-rc.1（实测 0.2.2-rc.5） | 当前版本。远端 shell 引用适配（Windows cmd 远端开箱即用）、literal glob 转义、盘符 glob 前缀、上传摘要回显远端落点、ssh2 解析第 4 级向上回溯 |
+| 0.2.3 (2026-11-20) | ≥ 0.2.0-rc.1 | 不同主机写入同一 `local_path` 的下载按目标路径串行化 |
+| 0.2.0 – 0.2.2 | ≥ 0.2.0-rc.1 | 早期线。按目标路径串行化是 0.2.3 才有的行为 |
 
 远端兼容：
 
 | 远端 | 状态 |
 |---|---|
 | OpenSSH 9.2p1（fnOS NAS） | 真机回归已验证 |
+| **Windows OpenSSH 9.5（cmd.exe）** | **真机回归已验证（0.2.4 起）**：盘符路径/空格路径/中文文件名/递归/glob；见下方「远端为 Windows 时」 |
 | dropbear / BusyBox / 厂商固件 | 未验证 |
-| Windows OpenSSH 远端，含空格路径 | 不支持 |
+
+### 远端为 Windows 时
+
+远端是 Windows OpenSSH（默认 shell cmd.exe）时的行为与注意点（均自 0.2.4 起）：
+
+- **路径引用自动适配**：盘符/UNC 路径按 Windows 语义引用——含空格或双引号时用双引号包裹（`"` 转义为 `""`），干净路径直传；POSIX 路径保持单引号。歧义场景（Windows 远端 + 相对路径）用 `remote_shell: "win"` 显式指定。
+- **盘符路径可用**：`C:/Users/...` 形式开箱即用；glob 批量接受盘符前缀（如 `C:/logs/*.txt`）。
+- **literal 下载含 `[]` 文件名**：POSIX 远端转义 glob 元字符后下发（绕过远端 scp 自身的 glob 解析）；Windows 远端直传（其 scp argv 无 glob 层）。
+- **非 ASCII 文件名**：SCP 线协议按原始字节传输名称；远端按系统 ANSI 代码页解码时，控制台显示可能乱码——实际字节名以 SFTP 列目录为准，读写内容不受影响。
+- **协商开销**：每次传输有约 2-15 秒的 SSH+scp 协商固定开销（与文件大小无关），批量小文件场景自行规划。
+- **上传不自动创建父目录**：上传到远端不存在的深层目录会失败，先建目录再传。
+- **递归下载不过滤隐藏文件**：`.git` 等会全量拉取，注意目录体量。
 
 插件为 host-only bundle：注册 host 工具与 patch config，不含 client 侧组件。
 
@@ -150,6 +164,7 @@ ssh2 依赖的处理同上。
 - local_path 必须为绝对路径。
 - 单次下载单文件上限 4 GiB，一棵目录树最多 20000 个条目；远端声明超出即拒绝。
 - 0.2.3 起，不同主机并行下载写入同一 local_path 已按目标路径自动串行化。
+- 上传结果摘要回显远端落点（`remote path: ...`），下载结果摘要回显本地落盘路径（`saved to ...`）——0.2.4 起，上传不再显示本地路径。
 
 ## Credits
 

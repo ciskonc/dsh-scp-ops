@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.2.4 — 2026-11-23
+
+Windows-remote adaptation release, driven by a three-agent real-world usage
+audit (MiniMax-M3.1-Flash) against a Windows OpenSSH 9.5 target.
+
+- **Fixed (P0)**: `ssh2` resolution now walks UP from this file's real
+  location looking for any hoisted `node_modules/ssh2` (hop 2b, 8 levels) —
+  Junction/link installs previously failed every hop because the host does
+  not inject `DSH_PROFILE_DIR` into plugin contexts. The failure message now
+  lists every anchor tried with its failure reason, instead of blaming one
+  env var.
+- **Fixed (P0)**: remote paths are quoted according to the REMOTE shell.
+  Windows OpenSSH's default cmd.exe does not strip single quotes, so every
+  transfer failed with a misleading ENOENT; drive-letter/UNC paths are now
+  double-quoted (or passed bare) with `"` escaped as `""`, and POSIX paths
+  keep the proven single-quote form. A `remote_shell` argument
+  (`posix`/`win`) pins ambiguous cases; detection defaults to the path shape.
+- **Fixed**: `literal: true` downloads of names containing glob characters
+  now escape the metacharacters in transit on POSIX remotes — the remote
+  scp's own internal glob() could never match them before.
+- **Fixed**: glob batch downloads accept Windows drive-letter prefixes
+  (`C:/logs/*.txt`) — the whitelist previously rejected `:`, making glob
+  unusable against Windows remotes.
+- **Changed**: a successful upload summary now shows the remote destination
+  (`remote path: ...`) instead of the local source path; download summaries
+  keep `saved to ...`.
+- **Docs**: new "When the remote is Windows" section (quoting, drive paths,
+  literal escaping, non-ASCII names, negotiation overhead, parent-directory
+  and hidden-file caveats); compatibility table records the Windows
+  regression.
+
 ## 0.2.3 — 2026-11-20
 
 Full hardening sweep: every remaining audit finding addressed (P2 batch),
