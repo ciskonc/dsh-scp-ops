@@ -64,7 +64,7 @@ The ssh2 dependency applies as above.
 
 Uploads files from the local machine to the remote host. Single files and recursive directories (`recursive`). Transfers to the same host queue up by default (`max_concurrent_per_host`, default 1); raise that value to run several directories of one host in parallel. Two uploads aimed at the same remote destination are a caller-side conflict with an undefined result.
 
-Landing semantics match OpenSSH scp: for a single file, a remote destination that is an existing directory receives the file inside itself, otherwise the exact path is written. With `recursive`, an existing remote destination nests the local basename inside it, while a destination that does not exist yet becomes the copy directory itself, named after the local basename. Results carry `local_path_resolved`.
+Landing semantics match OpenSSH scp: for a single file, a remote destination that is an existing directory receives the file inside itself, otherwise the exact path is written. With `recursive`, an existing remote destination nests the local basename inside it, while a destination that does not exist yet is created as-is at the requested path with the files directly inside (no extra basename level). Results carry `local_path_resolved` and `remote_path_resolved` (an echo of the request path sent to the remote).
 
 Transfers stream at constant memory in both directions and are verified by byte count.
 
@@ -75,7 +75,7 @@ Transfers stream at constant memory in both directions and are verified by byte 
 
 Downloads files from the remote host to the local machine. Single files, recursive directories and glob batches (for example `/logs/*.log`); with `literal: true`, glob characters are treated literally.
 
-With `recursive`, the remote top-level basename always nests inside local_path. Results carry `local_path_resolved`.
+With `recursive`, the remote top-level basename always nests inside local_path (whether or not that path existed before — deliberately asymmetric with uploads: it avoids clobbering an existing local directory). For single-file downloads, a `local_path` that is an existing directory receives the file inside it; an exact file path is written as-is (missing parent directories are created). Results carry `local_path_resolved`.
 
 Download writes pass a containment check and refuse `./` and `..` entries; a symlink inside the target directory that points outside it is refused rather than followed, and a same-named link is never overwritten. On a Windows plugin host, file names are sanitized with Windows semantics (ADS colons, reserved names and trailing dots stripped). The size the remote declares is checked against a 4 GiB limit, and a directory tree is capped at 20000 entries.
 
@@ -165,6 +165,7 @@ The plugin is a host-only bundle: it registers host tools and patch config, with
 - A download may carry at most 4 GiB per file, and one directory tree at most 20000 entries; a remote that declares more is refused.
 - Since 0.2.3, parallel downloads from different hosts into the same local_path are automatically serialized per target path.
 - Since 0.2.4, a successful upload summary shows the remote destination (`remote path: ...`) while a download summary shows where files landed locally (`saved to ...`) — uploads no longer print the local source path.
+- Uploading a tree of empty directories creates all of them on the remote (result: files=0, dirs=N) — `files=0` does not mean "nothing was transferred".
 
 ## Credits
 

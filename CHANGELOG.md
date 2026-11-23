@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.2.5 — 2026-11-23
+
+Patch release from the second retest round (three MiniMax-M3.1-Flash agents;
+the first round proved the live host had not reloaded 0.2.4, so one agent
+built an out-of-process harness driving the 0.2.4 source directly against the
+real Windows remote — its findings feed this release).
+
+- **Fixed (security)**: on Windows remotes every remote path is now
+  double-quoted unconditionally (with `"` escaped as `""`) — the previous
+  quote-only-if-space heuristic left paths containing cmd metacharacters
+  (`& | ^ % < > ( )`) bare, where `&` acts as a command separator. cmd strips
+  the surrounding quotes and treats the quoted content as inert.
+- **Docs**: recursive-upload landing wording corrected (a not-yet-existing
+  target is created as-is at the requested path — no extra basename level;
+  verified against real transfers); download landing rules (into-existing-
+  directory vs exact path, asymmetric with uploads by design) moved into both
+  READMEs; empty-directory-tree uploads documented (creates all empty dirs,
+  result reports files=0/dirs=N).
+
 ## 0.2.4 — 2026-11-23
 
 Windows-remote adaptation release, driven by a three-agent real-world usage

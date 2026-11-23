@@ -658,9 +658,11 @@ function remoteQuote(p, remoteShell) {
   const s = String(p);
   const mode = remoteShell ?? (winRemotePath(s) ? 'win' : 'posix');
   if (mode === 'win') {
-    // Quote when the path contains a space OR an embedded double quote — a
-    // bare path with '"' would let that quote act as cmd quoting.
-    return /[\s"]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    // v0.2.5: ALWAYS double-quote on Windows remotes — cmd strips the quotes
+    // and everything inside them is inert, which also neutralizes cmd
+    // metacharacters (& | ^ % < > ( )) in the path. A bare path containing
+    // e.g. "&" would let that character act as a command separator.
+    return `"${s.replace(/"/g, '""')}"`;
   }
   return `'${s.replace(/'/g, `'\\''`)}'`;
 }
@@ -1079,7 +1081,7 @@ async function runScp(kind, args, exec, profiles, gate, pathMutex) {
           : raw.replace(/[*?[\]\\]/g, (ch) => `\\${ch}`);
       }
       const patternArg = literalArg != null
-        ? (remoteShell === 'win' && /\s/.test(literalArg) ? `"${literalArg.replace(/"/g, '""')}"` : literalArg)
+        ? (remoteShell === 'win' ? `"${literalArg.replace(/"/g, '""')}"` : literalArg)
         : isUpload || !glob
           ? remoteQuote(a.remote_path, remoteShell)
           : (remoteShell === 'win' ? String(a.remote_path).replace(/"/g, '""') : String(a.remote_path));
