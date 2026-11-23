@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.3.0 — 2026-11-23
+
+Usability release: every suggestion from the two real-world audit rounds
+(27 items collected) triaged and implemented, reviewed, and verified on an
+in-process ssh2 server harness (11/11 scenarios).
+
+- **Added (S1/S5/S11)**: remote errors now carry actionable hints — the
+  plugin compares the echoed path for quote残留-style mangling, translates
+  ENOENT into "parent directory may not exist — the plugin never creates
+  remote directories", and explains `ambiguous target`; failures name the
+  remote shell mode and the exact attempted command.
+- **Added (S2)**: results echo `plugin_version` (`dsh-scp-ops@x.y.z`) so
+  stale-host mismatches are self-evident.
+- **Added (S3)**: glob batches against Windows remotes enumerate the remote
+  directory over the same connection (PowerShell UTF-8 listing), filter with
+  a glob→regex translation, and download the matched files exactly — cmd.exe
+  has no shell glob to rely on.
+- **Added (S4)**: ENOENT-style download failures attach a sanitized listing
+  of the remote directory, so wrong names are self-evident.
+- **Added (S7)**: recursive uploads report `remote_landing` — the predicted
+  remote landing directory (target/basename when the target exists, the
+  target itself when it does not), checked live over the connection.
+- **Added (S8)**: single-file uploads aimed at a directory-shaped
+  destination (`dir/`) automatically append the local basename.
+- **Added (S9)**: omitting auth material reuses the last successful
+  connection's credentials for the exact same host|port|username
+  (`credentials_reused: true`); credentials never travel to another target.
+- **Added (S10)**: remote console text decodes as GBK when UTF-8 fails
+  (Node full-ICU), fixing mojibake in Windows remote error messages.
+- **Added (S11)**: results and summaries declare the quoting mode
+  (`remote_shell_mode`, `[win quoting]`).
+- **Added (S13)**: empty directory tree uploads report "empty directory tree
+  created" instead of a bare count.
+- **Added (S14)**: downloads report `file_names` (sanitized, first 100) in
+  transfer order.
+- **Changed (S12)**: descriptions now state the tool-selection rule —
+  remotes with SFTP prefer sftp_*; scp_* is for remotes without one.
+- **Docs (S16)**: troubleshooting note for manual SCP protocol testing on
+  Windows (file redirection; pipes never terminate under cmd).
+
 ## 0.2.5 — 2026-11-23
 
 Patch release from the second retest round (three MiniMax-M3.1-Flash agents;

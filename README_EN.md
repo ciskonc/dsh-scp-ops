@@ -149,6 +149,7 @@ Behaviour and caveats when the remote is Windows OpenSSH (default shell cmd.exe)
 - **Non-ASCII file names**: the SCP wire protocol carries names as raw bytes; a remote that decodes them in its legacy ANSI code page may display mojibake in its console — verify actual byte-level names over SFTP. Content itself is unaffected.
 - **Negotiation overhead**: every transfer carries a fixed ~2-15 s SSH+scp negotiation cost regardless of file size; plan batches of small files accordingly.
 - **Uploads do not create missing parent directories**: uploading into a deep remote directory that does not exist fails — create it first.
+- **Manual protocol debugging**: when hand-testing the SCP protocol against a Windows remote, redirect commands from a file (`scp -t path < cmds.txt`); a pipe (`echo … | scp -t`) never terminates under cmd.
 - **Recursive downloads do not skip hidden files**: `.git` and friends are pulled in full — mind the tree size.
 
 The plugin is a host-only bundle: it registers host tools and patch config, with no client-side components.
