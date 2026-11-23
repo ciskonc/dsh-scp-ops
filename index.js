@@ -260,6 +260,42 @@ async function remotePathExists(conn, p, remoteShell, signal) {
  *  matches that exact target — credentials never travel to another host. */
 const lastAuthByTarget = new Map();
 
+/** N6 (v0.4.0): per-target connection pool. Transfers to the same
+ *  host|port|username reuse a live, keepalive-kept connection instead of
+ *  paying a fresh SSH handshake per call (~90% of small-transfer latency).
+ *  The entry is removed and the connection closed after POOL_IDLE_MS idle,
+ *  on abort, or when the plugin is disposed. */
+const connectionPool = new Map();
+const POOL_IDLE_MS = 60000;
+
+function poolRelease(key, conn, aborted) {
+  const entry = connectionPool.get(key);
+  if (entry && entry.conn !== conn) {
+    // A newer connection took the pool slot — close this stale one.
+    try { conn.end(); } catch {}
+    return;
+  }
+  if (aborted) {
+    connectionPool.delete(key);
+    if (entry) clearTimeout(entry.idleTimer);
+    try { conn.end(); } catch {}
+    return;
+  }
+  const idleTimer = setTimeout(() => {
+    connectionPool.delete(key);
+    try { conn.end(); } catch {}
+  }, POOL_IDLE_MS);
+  connectionPool.set(key, { conn, idleTimer });
+}
+
+function poolAcquire(key) {
+  const entry = connectionPool.get(key);
+  if (!entry) return null;
+  connectionPool.delete(key);
+  clearTimeout(entry.idleTimer);
+  return entry.conn;
+}
+
 /* ------------------------------------------------------------------ *
  * SCP wire reader: FIFO framing over one exec channel.
  * ------------------------------------------------------------------ */
@@ -829,7 +865,10 @@ function validateGlobPattern(pattern, { allowSpaces = false } = {}) {
   }
   // v0.3.0 (H-2): Windows remote paths legitimately carry a drive letter —
   // allow an optional single drive prefix before the whitelist body.
-  const body = p.replace(/^[a-zA-Z]:[\\/]/, '');
+  const body = p.replace(/^[a-zA-Z]:[\\/]/, '')
+    // v0.3.1 (R5): UNC paths (\\server\share\...) pass the whitelist too —
+    // strip the \\server\share prefix before the per-character body check.
+    .replace(/^\\\\[^\\]+\\[^\\]+/, '');
   // v0.3.1 (P2/N1): on Windows remotes the pattern never reaches a shell —
   // it is matched locally against a remote listing, so spaces are safe.
   const ok = allowSpaces
@@ -838,7 +877,7 @@ function validateGlobPattern(pattern, { allowSpaces = false } = {}) {
   if (!ok) {
     fail(`Glob remote_path may only contain letters/digits/._-/*?[]${allowSpaces ? ', spaces' : ''} (Han U+4E00-9FFF allowed; an optional drive prefix like C:/ is accepted)${allowSpaces ? ' — the pattern is matched locally against a remote listing, never executed by a shell' : ' — no spaces, quotes, ;|&$` or other shell characters'}.`);
   }
-  if (/(^|\/)\.\.(\/|$)/.test(p)) {
+  if (/(^|[\\/])\.\.([\\/]|$)/.test(p)) {
     fail('Glob remote_path must not contain ".." path segments — scope the pattern inside one directory.');
   }
 }
@@ -1229,15 +1268,36 @@ async function runScp(kind, args, exec, profiles, gate, pathMutex) {
     let conn;
     let remoteShell;
     let attemptedCommand = null;
+    let pooledFromCache = false;
     try {
       const glob = !isUpload && !a.literal && isGlobPattern(a.remote_path);
       remoteShell = a.remote_shell ?? (winRemotePath(a.remote_path) ? 'win' : 'posix');
       if (glob) validateGlobPattern(a.remote_path, { allowSpaces: remoteShell === 'win' });
-      conn = await openConnection(ssh2.Client ?? ssh2.default?.Client, auth, { signal: controller.signal, timeoutMs });
-      // S9: remember this target's auth so later calls to the exact same
-      // host|port|username may omit credentials.
-      if (auth.password || auth.privateKey) {
-        lastAuthByTarget.set(`${auth.host}|${auth.port}|${auth.username}`, { password: auth.password, privateKey: auth.privateKey, passphrase: auth.passphrase });
+      // N6 (v0.4.0): reuse a pooled live connection to the exact target when
+      // available; the release path drops aborted or errored connections, so
+      // a poisoned entry cannot be handed out twice.
+      const poolKey = `${a.host}|${Number(a.port ?? 22)}|${a.username}`;
+      conn = poolAcquire(poolKey);
+      if (conn) {
+        // v0.3.1 fix: lightweight health check — a pooled connection that has
+        // hit the remote's MaxSessions limit (or died silently) fails this
+        // trivial exec and is replaced by a fresh connection.
+        try {
+          await execCollect(conn, 'true', controller.signal, 5000);
+        } catch {
+          try { conn.end(); } catch {}
+          conn = null;
+        }
+      }
+      if (conn) {
+        pooledFromCache = true;
+      } else {
+        conn = await openConnection(ssh2.Client ?? ssh2.default?.Client, auth, { signal: controller.signal, timeoutMs });
+        // S9: remember this target's auth so later calls to the exact same
+        // host|port|username may omit credentials.
+        if (auth.password || auth.privateKey) {
+          lastAuthByTarget.set(`${auth.host}|${auth.port}|${auth.username}`, { password: auth.password, privateKey: auth.privateKey, passphrase: auth.passphrase });
+        }
       }
       // H-1 (v0.2.4): literal names with glob characters still hit the
       // remote scp's own internal glob() (it globs its argv even when the
@@ -1311,6 +1371,10 @@ async function runScp(kind, args, exec, profiles, gate, pathMutex) {
         truncated = !!outcome.truncated;
         warnings = outcome.warnings ?? warnings;
       }
+      // v0.3.1 fix: close the SCP channel as soon as the transfer completes —
+      // pooled connections accumulate channels otherwise, and remotes cap
+      // concurrent sessions (MaxSessions); prompt close frees the slot.
+      try { wire.stream.close(); } catch {}
       // v0.3.1 (N10): report the landing in the remote's own separator style.
       if (remoteLanding != null && remoteShell === 'win') remoteLanding = remoteLanding.replace(/\//g, '\\');
       return {
@@ -1318,7 +1382,8 @@ async function runScp(kind, args, exec, profiles, gate, pathMutex) {
         operation: kind,
         plugin_version: `dsh-scp-ops@${PLUGIN_VERSION}`, // S2
         remote_shell_mode: remoteShell, // S11
-        credentials_reused: auth.fromCache === true, // S9
+        credentials_reused: auth.fromCache === true || pooledFromCache, // S9+N6
+        pooled_connection: pooledFromCache, // N6
         message: truncated
           ? `${kind} completed but the remote closed early — completeness is not guaranteed (${acc.files} file(s) transferred)`
           : acc.files === 0 && acc.directories === 0
@@ -1346,6 +1411,8 @@ async function runScp(kind, args, exec, profiles, gate, pathMutex) {
         warnings,
       };
     } catch (e) {
+      // N6: a connection that produced an error must not return to the pool.
+      if (conn) { try { conn.end(); } catch {} conn = null; }
       // v0.3.1 (P5): cached-credential failures must explain themselves.
       if (auth.fromCache && e instanceof Error && /Authentication failed/i.test(e.message)) {
         e.message += ' [note: this attempt reused cached credentials for this exact target — they may be stale; pass an explicit password to refresh]';
@@ -1372,7 +1439,14 @@ async function runScp(kind, args, exec, profiles, gate, pathMutex) {
     } finally {
       clearTimeout(timer);
       exec.signal?.removeEventListener('abort', onOuter);
-      try { conn?.end(); } catch {}
+      // N6 (v0.4.0): return the live connection to the pool (idle-closed
+      // after 60 s) instead of tearing it down per call; aborted transfers
+      // discard the connection entirely.
+      if (conn) {
+        const poolKey = `${a.host}|${Number(a.port ?? 22)}|${a.username}`;
+        poolRelease(poolKey, conn, controller.signal.aborted);
+        conn = null;
+      }
     }
   };
   if (isUpload) return gate(auth.host, transfer);
@@ -1420,7 +1494,8 @@ function makeScpTool(kind, profiles, gate, pathMutex) {
       remote_path_resolved: { type: 'string', description: 'Remote path as sent to the remote side (uploads echo the destination; downloads echo the source).' },
       plugin_version: { type: 'string', description: 'Plugin package version that executed this call.' },
       remote_shell_mode: { type: 'string', description: 'Remote shell mode used for quoting: "win" or "posix".' },
-      credentials_reused: { type: 'boolean', description: 'True when auth material was reused from the last successful connection to this exact target (no credentials were passed this call).' },
+      credentials_reused: { type: 'boolean', description: 'True when auth material was reused from the last successful connection to this exact target, or a pooled connection to it was reused (no credentials were passed this call).' },
+      pooled_connection: { type: 'boolean', description: 'True when this transfer reused a pooled live SSH connection instead of a fresh handshake.' },
       remote_landing: { type: 'string', description: 'Recursive uploads: predicted remote landing directory — the target itself when it did not exist, target/basename when it did.' },
       file_names: { type: 'array', items: { type: 'string' }, description: 'File names written, in transfer order (downloads: sanitized local names; uploads: paths relative to the transfer root; first 100).' },
       file_names_total: { type: 'number', description: 'Total number of file names collected (uploads cap name collection at 100 — files is the true transfer count; file_names may be capped at 100).' },
@@ -1525,6 +1600,12 @@ export function apply(ctx, config) {
   }
   return () => {
     lastAuthByTarget.clear(); // S-d (v0.3.1): credentials live for the plugin's lifetime only
+    // N6 (v0.4.0): drain the connection pool.
+    for (const entry of connectionPool.values()) {
+      clearTimeout(entry.idleTimer);
+      try { entry.conn.end(); } catch {}
+    }
+    connectionPool.clear();
     for (const dispose of disposers) {
       try {
         dispose?.();

@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.4.0 — 2026-11-23
+
+Connection pooling release (N6, the last major audit suggestion): transfers
+to the same host|port|username reuse a pooled live SSH connection instead of
+paying a fresh handshake per call.
+
+- **Added (N6)**: per-target connection pool — pooled connections are
+  keepalive-kept, health-checked on take-over (a trivial exec replaces a
+  dead or MaxSessions-capped connection with a fresh one), idle-closed after
+  60 seconds, and never return to the pool after a failed or aborted
+  transfer. Results report `pooled_connection`.
+- **Fixed (R5)**: UNC glob patterns (`\\server\share\*.txt`) pass the
+  whitelist; the `..` segment check now covers both separators.
+- **Docs (R2/R3)**: `file_names_total` schema wording clarified (uploads cap
+  name collection at 100 — `files` is the true count); `file_names`
+  described as paths relative to the transfer root (top-level basename
+  included).
+- **Docs**: connection-pool semantics documented (pooled connections are
+  pre-authenticated — a later call with a wrong password still succeeds on
+  the pooled connection).
+
 ## 0.3.1 — 2026-11-23
 
 Adversarial-review fixes for 0.3.0 plus the definitive retest findings

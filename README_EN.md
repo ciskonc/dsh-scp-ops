@@ -170,6 +170,8 @@ The plugin is a host-only bundle: it registers host tools and patch config, with
 - Since 0.2.3, parallel downloads from different hosts into the same local_path are automatically serialized per target path.
 - Since 0.2.4, a successful upload summary shows the remote destination (`remote path: ...`) while a download summary shows where files landed locally (`saved to ...`) — uploads no longer print the local source path.
 - Uploading a tree of empty directories creates all of them on the remote (result: files=0, dirs=N) — `files=0` does not mean "nothing was transferred".
+- Since 0.3.1, omitted credentials reuse the last successful connection's auth material for the same host|port|username in this process (`credentials_reused: true`); the cache clears on plugin dispose or host restart — after a remote password change, pass the password explicitly.
+- **Connection pool (since 0.4.0)**: transfers to the same host|port|username reuse a pooled live connection (auto-closed after 60 s idle; a lightweight health check guards each pool take-over). Semantics note: authentication happened when the pooled connection was established — later calls with a WRONG password still succeed on the pooled connection. Verify credentials on a fresh target or after the pool idles out; failed/aborted transfers never return their connection to the pool.
 
 ## Credits
 
