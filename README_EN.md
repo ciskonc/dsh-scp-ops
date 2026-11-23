@@ -127,7 +127,10 @@ Legacy devices connect through profile-level `algorithms` (SHA1 KEX, CBC ciphers
 
 | Plugin version | DSH version tested | Notes |
 |---|---|---|
-| 0.2.4 (2026-11-23) | ≥ 0.2.0-rc.1 (tested on 0.2.2-rc.5) | Current release. Remote-shell quoting adaptation (Windows cmd remotes work out of the box), literal glob escaping, drive-letter glob prefix, upload summary shows the remote destination, and a fourth ssh2 resolution hop |
+| 0.3.1 (2026-11-23) | ≥ 0.2.0-rc.1 (tested on 0.2.2-rc.5) | Current release. Windows glob matching is case-insensitive and allows spaces (patterns are matched locally against a remote listing, never executed); enumerated names are filtered for cmd metacharacters; error listings and attempted commands are sanitized; the credential-reuse cache clears on plugin dispose |
+| 0.3.0 (2026-11-23) | ≥ 0.2.0-rc.1 | Real-world audit suggestions S1-S17: actionable error hints (echoed-quote detection, ENOENT translation, remote directory listings, attempted command), plugin_version/remote_shell_mode/credentials_reused/remote_landing/file_names fields, Windows glob enumeration via PowerShell UTF-8 listing, per-target credential reuse, GBK fallback decoding |
+| 0.2.5 (2026-11-23) | ≥ 0.2.0-rc.1 | Windows remote paths are always double-quoted (cmd metacharacter injection surface); README landing-semantics corrections |
+| 0.2.4 (2026-11-23) | ≥ 0.2.0-rc.1 | Remote-shell quoting adaptation (Windows cmd remotes work out of the box), literal glob escaping, drive-letter glob prefix, upload summary shows the remote destination, and a fourth ssh2 resolution hop |
 | 0.2.3 (2026-11-20) | ≥ 0.2.0-rc.1 | Downloads from different hosts into the same `local_path` are serialized per target path |
 | 0.2.0 – 0.2.2 | ≥ 0.2.0-rc.1 | Earlier line. The per-target-path serialization above arrived in 0.2.3 |
 
@@ -146,7 +149,7 @@ Behaviour and caveats when the remote is Windows OpenSSH (default shell cmd.exe)
 - **Path quoting adapts automatically**: drive-letter/UNC paths are quoted with Windows semantics — double-quoted when they contain a space or an embedded double quote (`"` escaped as `""`), passed bare otherwise; POSIX paths keep single quotes. Use `remote_shell: "win"` to disambiguate a Windows remote with relative paths.
 - **Drive-letter paths work**: `C:/Users/...` works out of the box; glob batches accept a drive prefix (e.g. `C:/logs/*.txt`).
 - **literal downloads of names with `[]`**: on POSIX remotes the glob metacharacters are escaped in transit (bypassing the remote scp's own glob parsing); on Windows remotes the path is sent as-is (its scp argv has no glob layer).
-- **Non-ASCII file names**: the SCP wire protocol carries names as raw bytes; a remote that decodes them in its legacy ANSI code page may display mojibake in its console — verify actual byte-level names over SFTP. Content itself is unaffected.
+- **Non-ASCII file names**: the SCP wire protocol carries names as raw bytes; a remote that decodes them in its legacy ANSI code page may display mojibake in its console. The actual byte-level names can be read directly on the remote with PowerShell (`[Console]::OutputEncoding=[Text.Encoding]::UTF8; Get-ChildItem -Name`) — the plugin's failure listings use exactly this since 0.3.1, so SFTP is no longer needed for verification. Content itself is unaffected.
 - **Negotiation overhead**: every transfer carries a fixed ~2-15 s SSH+scp negotiation cost regardless of file size; plan batches of small files accordingly.
 - **Uploads do not create missing parent directories**: uploading into a deep remote directory that does not exist fails — create it first.
 - **Manual protocol debugging**: when hand-testing the SCP protocol against a Windows remote, redirect commands from a file (`scp -t path < cmds.txt`); a pipe (`echo … | scp -t`) never terminates under cmd.

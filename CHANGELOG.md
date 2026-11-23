@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.3.1 — 2026-11-23
+
+Adversarial-review fixes for 0.3.0 plus the definitive retest findings
+(out-of-process harness against the real Windows remote: all three legacy
+suspicions from the first audit round closed as artifacts of the old quoting
+defect — downloads work, non-ASCII names round-trip byte-perfect, no
+intermittent failures).
+
+- **Fixed (review M1)**: remote directory listings and the attempted command
+  in error messages are sanitized through cleanRemoteText — the "sanitized"
+  claim now matches the code.
+- **Fixed (review M2)**: Windows glob enumeration skips names containing `%`
+  or control characters before they are forwarded into a cmd command string.
+- **Fixed (P1/N2)**: Windows glob matching is case-insensitive (NTFS
+  semantics) — `fin_*.TXT` now matches fin_1.txt.
+- **Fixed (P2/N1)**: Windows glob patterns allow spaces — the pattern is
+  matched locally against a remote listing, never executed by a shell; the
+  whitelist stays strict for POSIX remotes.
+- **Fixed (P3/N7)**: a rejected transfer now reads as a failure
+  ("remote rejected the transfer (fatal/error)") instead of a headline
+  saying "warning".
+- **Added (P4/N3)**: uploads report `file_names` too (paths relative to the
+  transfer root), and results carry `remote_path_requested` — the original
+  input before directory-shape rewriting.
+- **Added (P5/N5)**: when reused cached credentials fail authentication, the
+  error explains the cache may be stale and how to refresh.
+- **Added (N8/N9/N10)**: `file_names_total`, Windows glob `glob_scanned` /
+  `glob_matched` stats, and `remote_landing` in the remote's own separator
+  style.
+- **Fixed (review S-b/S-c)**: unbalanced `[` in glob patterns fails with a
+  readable message instead of a raw RegExp error; glob length (256) and
+  wildcard count (8) bounded.
+- **Fixed (review S-d)**: the credential-reuse cache clears when the plugin
+  is disposed; process-lifetime scope documented.
+- **Fixed (review S-e)**: host-originated abort reasons are no longer
+  message-enriched (they are shared Error instances).
+- **Fixed (review S-a)**: empty-directory-tree messages distinguish "created
+  on the remote" (upload) from "created locally" (download).
+- **Docs (M3/P6/S-f)**: compatibility table lists 0.2.5/0.3.0/0.3.1; the
+  non-ASCII name guidance now recommends PowerShell UTF-8 listing (the
+  plugin's own method) over SFTP; Windows glob notes cover spaces,
+  case-insensitivity and files-only matching.
+
 ## 0.3.0 — 2026-11-23
 
 Usability release: every suggestion from the two real-world audit rounds

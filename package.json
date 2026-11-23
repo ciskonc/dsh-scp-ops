@@ -1,6 +1,6 @@
 {
   "name": "dsh-scp-ops",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": false,
   "type": "module",
   "description": "SCP upload/download tools for DSH — legacy SCP wire protocol over ssh2, works without a remote SFTP subsystem.",
