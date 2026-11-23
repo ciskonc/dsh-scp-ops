@@ -1336,7 +1336,7 @@ async function runScp(kind, args, exec, profiles, gate, pathMutex) {
         remote_landing: remoteLanding, // S7 (recursive uploads; else undefined)
         file_names: acc.names.slice(0, 100), // S14 (downloads + uploads, sanitized)
         file_names_total: acc.names.length, // N8 (v0.3.1)
-        glob_scanned: winGlobScanned, // N9 (v0.3.1): win glob enumeration stats (else undefined)
+        glob_scanned: winGlobTargets ? winGlobScanned : undefined, // N9 (v0.3.1/R1): win glob enumeration stats (else undefined)
         glob_matched: winGlobTargets ? winGlobTargets.length : undefined,
         files: acc.files,
         directories: acc.directories,
@@ -1423,7 +1423,7 @@ function makeScpTool(kind, profiles, gate, pathMutex) {
       credentials_reused: { type: 'boolean', description: 'True when auth material was reused from the last successful connection to this exact target (no credentials were passed this call).' },
       remote_landing: { type: 'string', description: 'Recursive uploads: predicted remote landing directory — the target itself when it did not exist, target/basename when it did.' },
       file_names: { type: 'array', items: { type: 'string' }, description: 'File names written, in transfer order (downloads: sanitized local names; uploads: paths relative to the transfer root; first 100).' },
-      file_names_total: { type: 'number', description: 'Total number of file names collected (file_names may be capped at 100).' },
+      file_names_total: { type: 'number', description: 'Total number of file names collected (uploads cap name collection at 100 — files is the true transfer count; file_names may be capped at 100).' },
       glob_scanned: { type: 'number', description: 'Windows remote glob batches: number of files listed in the target directory.' },
       glob_matched: { type: 'number', description: 'Windows remote glob batches: number of files matched by the pattern.' },
       remote_path: { type: 'string', description: 'Remote path involved.' },
