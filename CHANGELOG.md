@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.1 — 2026-11-24
+
+- **Fixed (P1, e2e)**: results no longer carry explicit `undefined` properties (`remote_landing` / `glob_scanned` / `glob_matched` are attached only when meaningful) — the harness lossless-JSON gate rejected every otherwise-successful transfer result, turning each success into an INVALID_TOOL_OUTPUT error card.
+- **Added (P4, e2e)**: authentication failures now carry actionable hints (password/key/username checks, stale-cache refresh guidance), matching the SCP-stage error hints.
+
 ## 0.4.0 — 2026-11-23
 
 Connection pooling release (N6, the last major audit suggestion): transfers

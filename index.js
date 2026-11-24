@@ -1377,7 +1377,7 @@ async function runScp(kind, args, exec, profiles, gate, pathMutex) {
       try { wire.stream.close(); } catch {}
       // v0.3.1 (N10): report the landing in the remote's own separator style.
       if (remoteLanding != null && remoteShell === 'win') remoteLanding = remoteLanding.replace(/\//g, '\\');
-      return {
+      const result = {
         ok: true,
         operation: kind,
         plugin_version: `dsh-scp-ops@${PLUGIN_VERSION}`, // S2
@@ -1398,11 +1398,8 @@ async function runScp(kind, args, exec, profiles, gate, pathMutex) {
         remote_path: a.remote_path,
         remote_path_resolved: a.remote_path, // v0.2.4 (M-1): request-path echo
         remote_path_requested: args.remote_path, // N4 (v0.3.1): original input, before S8 rewriting
-        remote_landing: remoteLanding, // S7 (recursive uploads; else undefined)
         file_names: acc.names.slice(0, 100), // S14 (downloads + uploads, sanitized)
         file_names_total: acc.names.length, // N8 (v0.3.1)
-        glob_scanned: winGlobTargets ? winGlobScanned : undefined, // N9 (v0.3.1/R1): win glob enumeration stats (else undefined)
-        glob_matched: winGlobTargets ? winGlobTargets.length : undefined,
         files: acc.files,
         directories: acc.directories,
         bytes: acc.bytes,
@@ -1410,9 +1407,23 @@ async function runScp(kind, args, exec, profiles, gate, pathMutex) {
         truncated,
         warnings,
       };
+      // v0.4.1 (P1): the harness enforces lossless JSON — an explicit
+      // `undefined` property makes the whole result invalid. Optional fields
+      // are attached only when they have a value.
+      if (remoteLanding != null) result.remote_landing = remoteLanding; // S7
+      if (winGlobTargets) {
+        result.glob_scanned = winGlobScanned; // N9
+        result.glob_matched = winGlobTargets.length;
+      }
+      return result;
     } catch (e) {
       // N6: a connection that produced an error must not return to the pool.
       if (conn) { try { conn.end(); } catch {} conn = null; }
+      // v0.4.1 (P4): authentication failures get the same actionable-hint
+      // treatment as SCP-stage errors.
+      if (e instanceof Error && /Authentication failed/i.test(e.message) && !/hints:/.test(e.message)) {
+        e.message += ' [hints: check the password (or pass a private key instead); confirm the username; if this target worked before with omitted credentials, the cached auth may be stale — pass the password explicitly to refresh]';
+      }
       // v0.3.1 (P5): cached-credential failures must explain themselves.
       if (auth.fromCache && e instanceof Error && /Authentication failed/i.test(e.message)) {
         e.message += ' [note: this attempt reused cached credentials for this exact target — they may be stale; pass an explicit password to refresh]';
